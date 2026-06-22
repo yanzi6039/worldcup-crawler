@@ -27,5 +27,10 @@ data/crawl_status.json
 !data/.gitkeep
 !data/*.xlsx
 
+# 合规：版权敏感的爬虫代码仅本地保留，不推送到公开仓库
+scrapers/per_source.py
+scrapers/zhibo8_scraper.py
+scrapers/playwright_sources.py
+
 # OS
 .DS_Store

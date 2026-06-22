@@ -18,6 +18,13 @@ import logging
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
 
+# 强制北京时区（防止 cron 启动时 TZ=UTC 导致日期错位 + subprocess push 失败）
+os.environ["TZ"] = "Asia/Shanghai"
+try:
+    time.tzset()
+except AttributeError:
+    pass  # Windows 无 tzset
+
 from config import LOG_DIR, WEB_PORT
 from db import store
 from scrapers.tier1_easy import TIER1_SCRAPERS
@@ -498,7 +505,8 @@ def main():
     p.add_argument("--harvest-4d", action="store_true", help="为未来 4 天比赛每场挖 16 篇")
     p.add_argument("--incremental-3d", action="store_true", help="为未来 1-3 天比赛增量挖")
     p.add_argument("--harvest-match", type=int, metavar="ID", help="为指定比赛 ID 挖")
-    p.add_argument("--refresh-schedule", action="store_true", help="重爬 Wikipedia 赛程")
+    p.add_argument("--refresh-schedule", action="store_true", help="增量刷新赛程（本地+openfootball+ESPN比分）")
+    p.add_argument("--rebuild-schedule", action="store_true", help="清空 matches 表后重建（首次切换用）")
     p.add_argument("--retag-matches", action="store_true", help="重建所有比赛的新闻关联")
     p.add_argument("--verbose", "-v", action="store_true")
     args = p.parse_args()
@@ -537,8 +545,12 @@ def main():
             log.error(f"match {args.harvest_match} not found")
         return
     if args.refresh_schedule:
-        from scrapers.schedule_wikipedia import main as sched_main
-        sched_main()
+        from scrapers.schedule_builder import main as sched_main
+        sched_main(rebuild=False)
+        return
+    if args.rebuild_schedule:
+        from scrapers.schedule_builder import main as sched_main
+        sched_main(rebuild=True)
         return
     if args.retag_matches:
         from match_tagger import tag_all_upcoming
