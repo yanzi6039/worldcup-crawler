@@ -1,2 +1,2 @@
-https://node-continued-home-unlimited.trycloudflare.com
-https://node-continued-home-unlimited.trycloudflare.com/matches
+https://api.trycloudflare.com
+https://api.trycloudflare.com/matches

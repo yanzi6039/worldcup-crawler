@@ -368,90 +368,114 @@ def _export_and_push():
         matches = store.list_upcoming_matches(days=4, only_scheduled=False)
         news = store.list_news(limit=5000, exclude_video=True)
 
-        wb = Workbook()
+        from collections import defaultdict
+        from web.timezone_utils import beijing_day
 
-        # Sheet 1: 比赛
-        ws1 = wb.active
-        ws1.title = "Matches"
-        ws1.append(["Match ID", "Home", "Away", "Group", "Stage", "Kickoff (BJ)", "Articles", "Status"])
+        # 按北京时间日期分组
+        day_matches = defaultdict(list)
         for m in matches:
-            ws1.append([
-                m["id"],
-                f"{m.get('home_cn','') or m.get('home_en','')}",
-                f"{m.get('away_cn','') or m.get('away_en','')}",
-                m.get("group_name", ""),
-                m.get("stage", ""),
-                (m.get("kickoff_at") or "")[:16],
-                m.get("article_count", 0) or 0,
-                "✓" if (m.get("article_count", 0) or 0) >= 16 else "⚠",
-            ])
-        for cell in ws1[1]:
-            cell.font = Font(bold=True)
+            ka = m.get("kickoff_at") or ""
+            day = beijing_day(ka) if ka else "未定"
+            day_matches[day].append(m)
 
-        # Sheet 2: 新闻
-        ws2 = wb.create_sheet("News")
-        ws2.append(["ID", "Title", "Source", "Published", "Language", "URL", "Summary"])
-        for n in news:
-            ws2.append([
-                n.get("id"),
-                n.get("title", ""),
-                n.get("source_name", ""),
-                (n.get("published_at") or "")[:19],
-                n.get("language", ""),
-                n.get("url", ""),
-                (n.get("summary") or "")[:200],
-            ])
-        for cell in ws2[1]:
-            cell.font = Font(bold=True)
-
-        # 保存
         export_dir = os.path.join(BASE_DIR, "data")
         os.makedirs(export_dir, exist_ok=True)
-        xlsx_path = os.path.join(export_dir, f"worldcup_4d_{time.strftime('%m%d_%H%M')}.xlsx")
-        latest_path = os.path.join(export_dir, "worldcup_latest.xlsx")
-        wb.save(xlsx_path)
-        wb.save(latest_path)
-        log.info(f"✓ Excel 已生成: {xlsx_path}")
-
-        # Push 到 GitHub
         token = os.environ.get("GITHUB_TOKEN", "")
         repo = os.environ.get("GITHUB_REPO", "")
+        dingtalk_token = os.environ.get("DINGTALK_WEBHOOK_URL", "")
 
-        if token and repo:
-            # 确保 data 目录有 gitkeep
+        files_pushed = []
+
+        for day, day_ms in sorted(day_matches.items()):
+            if day == "未定":
+                continue
+
+            wb = Workbook()
+            for i, m in enumerate(day_ms):
+                home = f"{m.get('home_cn','') or m.get('home_en','')}"
+                away = f"{m.get('away_cn','') or m.get('away_en','')}"
+                sheet_name = f"{home}vs{away}"[:31]
+                cnt = m.get("article_count", 0) or 0
+
+                if i == 0:
+                    ws = wb.active
+                    ws.title = sheet_name
+                else:
+                    ws = wb.create_sheet(sheet_name)
+
+                ws.append(["标题", "来源", "时间", "URL", "摘要"])
+                for cell in ws[1]:
+                    cell.font = Font(bold=True)
+
+                articles = store.list_match_news(m["id"], include_content=False)
+                for n in articles:
+                    ws.append([
+                        n.get("title", ""),
+                        n.get("source_name", ""),
+                        (n.get("published_at") or "")[:19],
+                        n.get("url", ""),
+                        (n.get("summary") or "")[:150],
+                    ])
+                ws.column_dimensions['A'].width = 60
+                ws.column_dimensions['B'].width = 18
+                ws.column_dimensions['D'].width = 50
+
+            day_short = day.replace("2026-", "")  # 0623
+            day_display = day[5:].replace("-", "月") + "日"  # 6月23日
+            update_date = time.strftime('%m%d')
+            xlsx_name = f"worldcup_{day_short.replace('-','')}_{update_date}update.xlsx"
+            xlsx_path = os.path.join(export_dir, xlsx_name)
+            wb.save(xlsx_path)
+            files_pushed.append((day_display, xlsx_name))
+            log.info(f"✓ {day_display} → {xlsx_name} ({len(day_ms)} 场)")
+
+        # Push
+        if token and repo and files_pushed:
             gitkeep = os.path.join(export_dir, ".gitkeep")
             if not os.path.exists(gitkeep):
-                with open(gitkeep, "w") as f:
-                    pass
+                with open(gitkeep, "w") as f: pass
 
             subprocess.run(["git", "-C", BASE_DIR, "add", "data/"], capture_output=True)
             subprocess.run(["git", "-C", BASE_DIR, "commit", "-m",
-                           f"Auto export {time.strftime('%m-%d %H:%M')}"], capture_output=True)
+                           f"Auto export {time.strftime('%m%d')}"], capture_output=True)
 
-            # Push with token
             push_url = f"https://{token}@github.com/{repo}.git"
-            r = subprocess.run(["git", "-C", BASE_DIR, "push", push_url, "main"],
+            r = subprocess.run(["git", "-C", BASE_DIR, "-c", "http.sslVerify=false", "push", push_url, "main"],
                              capture_output=True, text=True)
             if r.returncode == 0:
                 log.info("✓ 已推送到 GitHub")
             else:
                 log.warning(f"Git push failed: {r.stderr[:100]}")
 
-        # 钉钉通知
-        dingtalk_token = os.environ.get("DINGTALK_WEBHOOK_URL", "")
-        if dingtalk_token:
+        # 钉钉通知（纯文本，含每场比赛详情）
+        if dingtalk_token and files_pushed:
             import requests as req
-            ok_m = sum(1 for m in matches if (m.get("article_count", 0) or 0) >= 16)
-            text = (
-                f"## ⚽ 世界杯数据更新\n\n"
-                f"**时间**: {time.strftime('%m-%d %H:%M')}\n\n"
-                f"**文章总数**: {len(news)} 篇\n\n"
-                f"**比赛覆盖**: {ok_m}/{len(matches)} 场达标\n\n"
-                f"📥 [下载 Excel](https://github.com/{repo}/raw/main/data/worldcup_latest.xlsx)\n\n"
-                f"💻 [打开网页](http://localhost:8001/matches)"
-            )
+            from web.timezone_utils import to_beijing
+
+            lines = ["⚽ 世界杯数据更新"]
+            for day, day_ms in sorted(day_matches.items()):
+                if day == "未定":
+                    continue
+                day_display = day[5:].replace("-", "月") + "日"
+                day_short = day.replace("2026-", "").replace("-", "")
+                update_date = time.strftime('%m%d')
+                xlsx_name = f"worldcup_{day_short}_{update_date}update.xlsx"
+                download_url = f"https://github.com/{repo}/raw/main/data/{xlsx_name}"
+
+                lines.append(f"\n{day_display}")
+                for m in day_ms:
+                    home = f"{m.get('home_cn','') or m.get('home_en','')}"
+                    away = f"{m.get('away_cn','') or m.get('away_en','')}"
+                    bj_time = to_beijing(m.get("kickoff_at", ""), "%H:%M")
+                    cnt = m.get("article_count", 0) or 0
+                    lines.append(f"赛程: 北京时间{bj_time} {home}vs{away}")
+                    lines.append(f"数据量: {cnt}条")
+                lines.append(f"excel: {xlsx_name}")
+                lines.append(f"下载: {download_url}")
+
+            text = "\n".join(lines)
             try:
-                req.post(dingtalk_token, json={"msgtype": "markdown", "markdown": {"title": "世界杯数据更新", "text": text}}, timeout=10)
+                req.post(dingtalk_token, json={"msgtype": "text", "text": {"content": text}}, timeout=10)
                 log.info("✓ 钉钉通知已发送")
             except Exception as e:
                 log.warning(f"钉钉通知失败: {e}")
