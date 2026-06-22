@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block title %}世界杯新闻 · 首页{% endblock %}
+{% block content %}
+
+<form class="filters" method="get" action="/">
+  <label>国家</label>
+  <select name="country" onchange="this.form.submit()">
+    <option value="">全部</option>
+    {% for c in countries %}
+    <option value="{{ c.id }}" {% if filters.country == c.id %}selected{% endif %}>{{ c.name_cn }}</option>
+    {% endfor %}
+  </select>
+
+  <label>来源</label>
+  <select name="source" onchange="this.form.submit()">
+    <option value="">全部</option>
+    {% for s in sources %}
+    <option value="{{ s.name }}" {% if filters.source == s.name %}selected{% endif %}>{{ s.display_name or s.name }}</option>
+    {% endfor %}
+  </select>
+
+  <label>搜索</label>
+  <input type="text" name="q" value="{{ filters.q or '' }}" placeholder="关键词…" size="14">
+
+  <button type="submit" style="background:#34c759;">🔍</button>
+  <a href="/" class="btn" style="background:#6e6e73;">清空</a>
+
+  <div style="margin-left:auto;">
+    <button type="button" id="crawlBtn" onclick="triggerCrawl()" style="background:#ff3b30;">🔄 拉取最新</button>
+  </div>
+</form>
+
+<div class="filters" style="padding:10px 16px;background:#fafafa;border:1px solid #e8e8ed;">
+  <label style="font-size:13px;color:#6e6e73;">📤 导出：</label>
+  <a class="btn" style="background:#34c759;" href="/api/export.json" target="_blank">JSON</a>
+  <a class="btn" style="background:#34c759;" href="/api/export.csv" target="_blank">CSV</a>
+  <a class="btn" style="background:#34c759;" href="/api/export.xlsx">Excel</a>
+</div>
+
+<div style="margin-bottom:12px;font-size:13px;color:#6e6e73;">
+  共 <b id="totalCount">{{ total }}</b> 篇（显示 {{ shown }}）
+</div>
+
+<div class="news-list" id="newsList">
+{% for n in news %}
+  <div class="news-card">
+    <div class="meta">
+      <span style="color:#0071e3;font-weight:600;">{{ n.source_name }}</span>
+      · {{ n.language }}
+      {% if n.published_at %}· {{ n.published_at[:16] }}{% endif %}
+    </div>
+    <h3><a href="/article/{{ n.id }}" target="_blank">{{ n.title }}</a></h3>
+    {% if n.summary %}<div class="summary">{{ n.summary[:120] }}{% if n.summary|length > 120 %}…{% endif %}</div>{% endif %}
+  </div>
+{% endfor %}
+</div>
+
+{% if total >= 20 %}
+<div style="text-align:center;padding:20px;">
+  <button id="loadMoreBtn" onclick="loadMore()" style="padding:10px 40px;font-size:15px;">📥 加载更多</button>
+</div>
+{% endif %}
+
+<script>
+var offset = 20;
+var loading = false;
+function loadMore() {
+  if (loading) return;
+  loading = true;
+  var btn = document.getElementById('loadMoreBtn');
+  btn.textContent = '⏳ 加载中…';
+  btn.disabled = true;
+
+  var params = new URLSearchParams(window.location.search);
+  params.set('limit', 20);
+  params.set('offset', offset);
+
+  fetch('/api/news?' + params.toString())
+    .then(r => r.json())
+    .then(data => {
+      var list = document.getElementById('newsList');
+      data.news.forEach(function(n) {
+        var card = document.createElement('div');
+        card.className = 'news-card';
+        var dateStr = n.published_at ? '· ' + n.published_at.substring(0, 16) : '';
+        card.innerHTML =
+          '<div class="meta"><span style="color:#0071e3;font-weight:600;">' + n.source_name + '</span> · ' + n.language + ' ' + dateStr + '</div>' +
+          '<h3><a href="/article/' + n.id + '" target="_blank">' + n.title + '</a></h3>' +
+          (n.summary ? '<div class="summary">' + n.summary.substring(0, 120) + '</div>' : '');
+        list.appendChild(card);
+      });
+      offset += data.news.length;
+      btn.textContent = '📥 加载更多';
+      btn.disabled = false;
+      if (data.news.length < 20) btn.style.display = 'none';
+      loading = false;
+    });
+}
+
+async function triggerCrawl() {
+  var btn = document.getElementById('crawlBtn');
+  btn.disabled = true;
+  btn.textContent = '⏳ …';
+  try { await fetch('/api/crawl/trigger', {method: 'POST'}); }
+  catch(e) {}
+  setTimeout(function() { btn.disabled = false; btn.textContent = '🔄 拉取最新'; }, 5000);
+}
+</script>
+
+{% endblock %}

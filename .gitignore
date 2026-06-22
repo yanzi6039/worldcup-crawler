@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+venv/
+.venv/
+
+# DB
+db/worldcup.db
+db/worldcup.db-journal
+db/worldcup.db-wal
+db/worldcup.db-shm
+
+# Logs
+logs/
+
+# IDE
+.vscode/
+.idea/
+
+# Secrets
+.env
+
+# Data (允许 Excel 导出)
+data/*.json
+data/crawl_status.json
+!data/.gitkeep
+!data/*.xlsx
+
+# OS
+.DS_Store

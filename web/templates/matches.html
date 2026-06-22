@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% block title %}比赛中心 · 世界杯 2026{% endblock %}
+{% block content %}
+
+<h2 style="margin-top:0;">📅 比赛中心 · 北京时间</h2>
+
+<div class="filters" style="padding:10px 16px;background:#fafafa;border:1px solid #e8e8ed;">
+  <label style="font-size:13px;color:#6e6e73;">时间范围：</label>
+  <a href="/matches?days=4" class="btn" style="padding:4px 12px;font-size:13px;{% if days==4 %}background:#0071e3;{% else %}background:white;color:#0071e3;border:1px solid #0071e3;{% endif %}">4 天</a>
+  <a href="/matches?days=7" class="btn" style="padding:4px 12px;font-size:13px;{% if days==7 %}background:#0071e3;{% else %}background:white;color:#0071e3;border:1px solid #0071e3;{% endif %}">7 天</a>
+  <span style="margin-left:auto;font-size:13px;color:#6e6e73;">
+    🎯 4 天后需 bulk: <b style="color:#ff3b30;">{{ bulk_count }}</b> 场
+    · 1-3 天增量: <b style="color:#ffb800;">{{ incr_count }}</b> 场
+    · 共 {{ total }} 场
+  </span>
+</div>
+
+<div class="status-bar" style="background:#fff4cc;margin-top:12px;padding:12px 16px;border-radius:6px;font-size:13px;">
+  💡 <b>优先级</b>：4 天后比赛需<b>一次性 bulk harvest</b>（每场 16 篇），1-3 天做<b>增量更新</b>，今日已开赛的比赛已自动隐藏。
+</div>
+
+<div class="status-bar" id="statusBar" style="display:none;margin-top:12px;"></div>
+<div id="liveLog" style="display:none;margin-top:12px;"></div>
+
+{% for day in sorted_days %}
+  {% set day_matches = grouped[day] %}
+  {% set label = day_labels.get(day, day) %}
+  <div style="margin:24px 0 8px;display:flex;align-items:center;gap:12px;">
+    <h3 style="margin:0;font-size:18px;">🗓 {{ label }} <span style="color:#6e6e73;font-weight:normal;font-size:14px;">（{{ day }}）</span></h3>
+    <span style="font-size:13px;color:#6e6e73;">· {{ day_matches|length }} 场</span>
+    {% if '4天后' in label or '5天后' in label or '6天后' in label %}
+      <span style="background:#ff3b30;color:white;font-size:11px;padding:2px 8px;border-radius:10px;">优先 bulk</span>
+    {% endif %}
+  </div>
+
+  <div class="news-list">
+  {% for m in day_matches %}
+    <div class="news-card" data-match-id="{{ m.id }}">
+      <div class="meta">
+        <span style="font-weight:600;color:#0071e3;">{{ m.stage or '小组赛' }}</span>
+        {% if m.group %}· 组 {{ m.group }}{% endif %}
+        · 🕐 <b style="color:#ff3b30;">{{ m.kickoff_time_bj }}</b> 北京时间
+        {% if m.venue %}· 🏟 {{ m.venue[:30] }}{% endif %}
+      </div>
+      <h3 style="margin:6px 0;">
+        <a href="/matches/{{ m.id }}" style="color:#1d1d1f;text-decoration:none;">
+          {{ m.home }} <span style="color:#6e6e73;font-weight:normal;">vs</span> {{ m.away }}
+        </a>
+      </h3>
+
+      <div style="display:flex;align-items:center;gap:12px;margin-top:8px;">
+        <div style="flex:1;background:#e8e8ed;border-radius:4px;height:8px;overflow:hidden;">
+          <div style="width:{% if m.article_count >= 16 %}100{% else %}{{ (m.article_count / 16 * 100)|int }}{% endif %}%;height:100%;background:{% if m.article_count >= 16 %}#34c759{% elif m.article_count >= 8 %}#ffb800{% else %}#ff3b30{% endif %};"></div>
+        </div>
+        <span style="font-size:13px;font-weight:600;color:{% if m.article_count >= 16 %}#34c759{% elif m.article_count >= 8 %}#ffb800{% else %}#ff3b30{% endif %};">
+          {{ m.article_count }} / 16
+        </span>
+      </div>
+
+      <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+        <a class="btn" style="background:#0071e3;padding:4px 12px;font-size:13px;text-decoration:none;"
+           href="/matches/{{ m.id }}">📋 查看详情</a>
+        <button class="btn" style="background:#34c759;padding:4px 12px;font-size:13px;border:0;cursor:pointer;"
+                onclick="harvestMatch({{ m.id }}, '{{ m.home_en }}', '{{ m.away_en }}')">🔄 继续挖掘</button>
+        <a class="btn" style="background:#6e6e73;padding:4px 12px;font-size:13px;text-decoration:none;"
+           href="/api/matches/{{ m.id }}/news" target="_blank">📥 JSON</a>
+        <a class="btn" style="background:#1d6f42;padding:4px 12px;font-size:13px;text-decoration:none;"
+           href="/api/matches/{{ m.id }}/export.xlsx">📊 Excel</a>
+      </div>
+    </div>
+  {% endfor %}
+  </div>
+{% endfor %}
+
+{% if not sorted_days %}
+<div class="empty">
+  <div style="font-size:48px;margin-bottom:12px;">📅</div>
+  <div>未来 {{ days }} 天暂无赛程</div>
+  <div style="font-size:13px;margin-top:8px;">跑 <code>python3 run_now.py --refresh-schedule</code> 更新赛程</div>
+</div>
+{% endif %}
+
+<script>
+async function harvestMatch(id, home, away) {
+  if (!confirm(`确定为 "${home} vs ${away}" 挖掘 16 篇新闻吗？\n（耗时约 2-3 分钟）`)) return;
+  const bar = document.getElementById('statusBar');
+  const liveLog = document.getElementById('liveLog');
+  bar.style.display = 'block';
+  liveLog.style.display = 'block';
+  liveLog.textContent = '';
+  bar.textContent = `正在为 #${id} ${home} vs ${away} 挖掘…`;
+
+  try {
+    const r = await fetch(`/api/matches/${id}/harvest`, {method: 'POST'});
+    const data = await r.json();
+    if (r.status === 409) {
+      bar.textContent = '⚠ 已有任务在跑';
+      return;
+    }
+    bar.textContent = '✓ ' + (data.match || '已启动');
+
+    let elapsed = 0, lastLogCount = 0;
+    const poll = setInterval(async () => {
+      elapsed += 2;
+      try {
+        const st = await fetch('/api/crawl/status').then(r => r.json());
+        if (st.log && st.log.length > lastLogCount) {
+          liveLog.textContent += st.log.slice(lastLogCount).join('\n') + '\n';
+          lastLogCount = st.log.length;
+          liveLog.scrollTop = liveLog.scrollHeight;
+        }
+        const last = st.log && st.log[st.log.length-1] || '挖掘中…';
+        bar.textContent = `🟢 ${last}（${elapsed}s）`;
+        if (!st.running) {
+          clearInterval(poll);
+          bar.textContent = `✓ ${last}（${elapsed}s）`;
+          bar.style.background = '#d4f4dd';
+          setTimeout(() => location.reload(), 1500);
+        }
+      } catch (e) {}
+      if (elapsed > 600) clearInterval(poll);
+    }, 2000);
+  } catch (e) {
+    bar.textContent = '✗ 错误：' + e.message;
+  }
+}
+</script>
+
+{% endblock %}

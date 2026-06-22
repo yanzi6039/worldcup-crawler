@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}{{ n.title }}{% endblock %}
+{% block content %}
+
+<div style="margin-bottom:12px;">
+  <a href="/" style="color:#0071e3;text-decoration:none;">← 返回列表</a>
+</div>
+
+<div class="news-card" style="padding:24px;">
+  <div class="meta" style="margin-bottom:8px;">
+    <span style="color:#0071e3;font-weight:600;">{{ n.source_name }}</span>
+    · {{ n.language }}
+    {% if n.published_at %}· {{ n.published_at }}{% endif %}
+    {% if n.author %}· {{ n.author }}{% endif %}
+  </div>
+  <h2 style="margin:0 0 12px;font-size:22px;">{{ n.title }}</h2>
+
+  {% if n.countries or n.players %}
+  <div class="tags" style="margin-bottom:16px;">
+    {% if n.countries %}
+      {% for c in n.countries.split(',') if c %}
+        <span class="tag country">{{ c }}</span>
+      {% endfor %}
+    {% endif %}
+    {% if n.players %}
+      {% for p in n.players.split(',') if p %}
+        <span class="tag player">{{ p }}</span>
+      {% endfor %}
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {% if n.summary %}
+    <div style="padding:12px;background:#f5f5f7;border-radius:6px;margin-bottom:16px;font-style:italic;">
+      {{ n.summary }}
+    </div>
+  {% endif %}
+
+  {% if n.content %}
+    <div style="white-space:pre-wrap;font-size:15px;line-height:1.7;color:#424245;">
+{{ n.content[:5000] }}{% if n.content|length > 5000 %}
+
+…（仅展示前 5000 字，原文 {{ n.content|length }} 字）{% endif %}
+    </div>
+  {% endif %}
+
+  <div style="margin-top:24px;padding-top:16px;border-top:1px solid #e8e8ed;">
+    <a href="{{ n.url }}" target="_blank" class="btn">🔗 查看原文 →</a>
+  </div>
+</div>
+
+{% endblock %}

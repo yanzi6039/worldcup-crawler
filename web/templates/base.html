@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{% block title %}世界杯新闻聚合{% endblock %}</title>
+<style>
+* { box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+       margin: 0; background: #f5f5f7; color: #1d1d1f; line-height: 1.5; }
+header { background: #1d1d1f; color: white; padding: 16px 24px; }
+header h1 { margin: 0; font-size: 20px; font-weight: 600; }
+header a { color: white; text-decoration: none; margin-right: 20px; font-size: 14px; }
+header a:hover { color: #ffb800; }
+main { max-width: 1200px; margin: 0 auto; padding: 24px; }
+.filters { background: white; padding: 16px; border-radius: 8px; margin-bottom: 16px;
+           display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+.filters label { font-size: 13px; color: #6e6e73; }
+.filters select, .filters input { padding: 6px 10px; border: 1px solid #d2d2d7; border-radius: 4px;
+                                  font-size: 14px; background: white; }
+button, .btn { padding: 6px 14px; border: 0; background: #0071e3; color: white; cursor: pointer;
+              border-radius: 4px; font-size: 14px; text-decoration:none; }
+button:hover, .btn:hover { background: #0077ed; }
+button:disabled { background: #6e6e73; cursor: not-allowed; }
+.news-list { display: grid; gap: 12px; }
+.news-card { background: white; padding: 16px 20px; border-radius: 8px;
+             transition: box-shadow .2s; }
+.news-card:hover { box-shadow: 0 2px 12px rgba(0,0,0,0.08); }
+.news-card h3 { margin: 0 0 8px; font-size: 16px; font-weight: 600; }
+.news-card h3 a { color: #1d1d1f; text-decoration: none; }
+.news-card h3 a:hover { color: #0071e3; }
+.news-card .meta { font-size: 12px; color: #6e6e73; margin-bottom: 6px; }
+.news-card .summary { font-size: 14px; color: #424245; }
+.tags { margin-top: 8px; }
+.tag { display: inline-block; padding: 2px 8px; margin-right: 6px; margin-bottom: 4px;
+       background: #e8e8ed; border-radius: 10px; font-size: 11px; color: #1d1d1f; }
+.tag.country { background: #fff4cc; }
+.tag.player { background: #d4e9ff; }
+.empty { text-align: center; padding: 60px 20px; color: #6e6e73; }
+.status-bar { padding: 10px 16px; background: #fff4cc; border-radius: 6px;
+              margin-bottom: 16px; font-size: 13px; }
+.stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+.stat-card { background: white; padding: 16px; border-radius: 8px; }
+.stat-card .num { font-size: 24px; font-weight: 600; color: #0071e3; }
+.stat-card .lbl { font-size: 12px; color: #6e6e73; }
+table { width: 100%; border-collapse: collapse; background: white; border-radius: 8px;
+        overflow: hidden; }
+th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid #e8e8ed; font-size: 13px; }
+th { background: #f5f5f7; }
+pre.log { background: #1d1d1f; color: #00ff00; padding: 12px; border-radius: 6px;
+          font-family: "SF Mono", monospace; font-size: 12px; max-height: 400px; overflow-y: auto;
+          white-space: pre-wrap; word-wrap: break-word; }
+
+</style>
+</head>
+<body>
+<header>
+  <h1>⚽ 世界杯新闻聚合 · 2026 美加墨</h1>
+  <nav style="margin-top:8px;">
+    <a href="/">新闻列表</a>
+    <a href="/matches">比赛中心</a>
+    <a href="/dashboard">爬虫状态</a>
+    <span id="crawlIndicator" style="float:right;font-size:12px;">
+      ⚪ 空闲
+    </span>
+  </nav>
+</header>
+<main>
+{% block content %}{% endblock %}
+</main>
+
+<script>
+// Nav indicator via polling (no persistent connections)
+(function(){
+  var indicator = document.getElementById('crawlIndicator');
+  function poll() {
+    fetch('/api/crawl/status').then(r => r.json()).then(d => {
+      if (indicator) {
+        if (d.running) {
+          indicator.innerHTML = '🟢 ' + (d.current_source || '抓取中…');
+          indicator.style.color = '#34c759';
+        } else {
+          indicator.innerHTML = '⚪ 空闲';
+          indicator.style.color = '#ffb800';
+          if (d.total_new) indicator.innerHTML += ' | 本轮 +' + d.total_new;
+        }
+      }
+    }).catch(function(){});
+  }
+  poll();
+  setInterval(poll, 15000);
+})();
+</script>
+</body>
+</html>
