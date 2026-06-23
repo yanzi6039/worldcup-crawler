@@ -119,7 +119,7 @@ def serve_mode():
             _export_and_push, "cron", hour=8, minute=7, id="export_morning",
         )
         scheduler.start()
-        log.info("✓ 随机爬虫已启动：API每30-60m / HTTP每1-2h / PW每2-4h")
+        log.info("✓ 爬虫已启动：API 每 30m / HTTP 每 60m / PW 每 120m")
         log.info("✓ 定时导出：每天 0:00 / 8:00")
 
         log.info(f"💻 本地: http://localhost:{WEB_PORT}/matches")
@@ -215,7 +215,13 @@ def _crawl_tier(tier_name: str, source_names: list[str], max_per: int):
 
 
 def _random_crawl_cycle():
-    """随机的全源爬取（不同 tier 不同间隔）"""
+    """固定间隔 + 抖动的全源爬取（5 分钟检查一次）
+    - API tier 每 30 分钟跑一次
+    - HTTP tier 每 60 分钟跑一次
+    - PW tier 每 120 分钟跑一次
+    用 5 分钟时间桶判断，桶号 mod 间隔 == 偏移 时启动。
+    每次启动前 sleep 0-90 秒随机抖动，避免规律性。
+    """
     import random as _rand
     from match_tagger import tag_all_upcoming
     from web.crawl_status import crawl_status
@@ -223,46 +229,44 @@ def _random_crawl_cycle():
     if crawl_status.is_running():
         return
 
-    crawl_status.start_crawl("")
-    crawl_status.log_event(f"🔄 定时爬取启动 {time.strftime('%H:%M')}")
+    # 5 分钟时间桶（0, 1, 2, ... 一天 288 个）
+    now_min = int(time.strftime("%M")) + int(time.strftime("%H")) * 60
+    bucket = now_min // 5
 
-    # Tier 定义
-    tier_sources = {
-        "API": ["dongqiudi", "espn_pw", "theanalyst_api", "bbc_sport", "skysports", "90min", "guardian"],
-        "HTTP": ["theanalyst", "flashscore", "goal", "fourfourtwo", "rotowire", "kickoff"],
-        "PW": ["sofascore", "squawka", "fifa", "espn", "goal_pw"],
+    # 各 tier 的触发判断（错开桶避免同时启动）
+    # API: 每 6 桶（30 min）触发一次，桶号 0
+    # HTTP: 每 12 桶（60 min）触发一次，桶号 2
+    # PW: 每 24 桶（120 min）触发一次，桶号 4
+    triggers = {
+        "API":  (bucket % 6 == 0,  ["dongqiudi", "espn_pw", "theanalyst_api", "bbc_sport", "skysports", "90min", "guardian"], 20),
+        "HTTP": (bucket % 12 == 2, ["theanalyst", "flashscore", "goal", "fourfourtwo", "rotowire", "kickoff"], 15),
+        "PW":   (bucket % 24 == 4, ["sofascore", "squawka", "fifa", "espn", "goal_pw"], 10),
     }
 
-    now_min = int(time.strftime("%M")) + int(time.strftime("%H")) * 60
     any_ran = False
-
-    for tier, sources in tier_sources.items():
-        if tier == "API":
-            if now_min % _rand.randint(30, 60) > _rand.randint(5, 15):
-                continue
-            max_per = 20
-        elif tier == "HTTP":
-            if now_min % _rand.randint(60, 120) > _rand.randint(10, 25):
-                continue
-            max_per = 15
-        else:
-            if now_min % _rand.randint(120, 240) > _rand.randint(15, 30):
-                continue
-            max_per = 10
-
-        crawl_status.log_event(f"▶ T{tier} 启动，{len(sources)} 个源")
+    for tier, (should_run, sources, max_per) in triggers.items():
+        if not should_run:
+            continue
+        # 桶内抖动：启动前 sleep 0-90s，让请求时间不完全规律
+        jitter = _rand.uniform(0, 90)
+        time.sleep(jitter)
+        if crawl_status.is_running():
+            continue  # 抖动期间被其他周期抢占了
+        crawl_status.start_crawl("")
+        crawl_status.log_event(f"🔄 T{tier} 启动（抖动 {jitter:.0f}s）{time.strftime('%H:%M')} - {len(sources)} 源")
         _crawl_tier(tier, sources, max_per)
         any_ran = True
 
+    if not any_ran:
+        return  # 这个桶没有 tier 需要跑，直接退出
+
     # 重打标签
     try:
-        if any_ran:
-            crawl_status.log_event("  🏷 更新比赛标签…")
-            tag_all_upcoming(days=7)
-            # 打印比赛覆盖
-            matches = store.list_upcoming_matches(days=4, only_scheduled=False)
-            ok = sum(1 for m in matches if (m.get("article_count", 0) or 0) >= 16)
-            crawl_status.log_event(f"  比赛覆盖: {ok}/{len(matches)} 场达标")
+        crawl_status.log_event("  🏷 更新比赛标签…")
+        tag_all_upcoming(days=7)
+        matches = store.list_upcoming_matches(days=4, only_scheduled=False)
+        ok = sum(1 for m in matches if (m.get("article_count", 0) or 0) >= 16)
+        crawl_status.log_event(f"  比赛覆盖: {ok}/{len(matches)} 场达标")
     except: pass
 
     try:
