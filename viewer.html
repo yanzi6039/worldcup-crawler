@@ -1,0 +1,1477 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>赛事编辑台 · 世界杯 2026</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #FAFAF7;
+  --bg-elev: #F4F2EC;
+  --bg-panel: #FDFCF8;
+  --ink: #0F0F0F;
+  --ink-2: #4A4A47;
+  --ink-3: #8B8B85;
+  --border: #E5E2D9;
+  --border-2: #C9C5B9;
+  --accent: #8B1E3F;
+  --accent-soft: #F4E8EC;
+  --success: #2D5F3F;
+  --success-soft: #E5F0E8;
+  --warn: #B45309;
+  --warn-soft: #FAEED1;
+  --sans: 'Geist', 'PingFang SC', -apple-system, sans-serif;
+  --mono: 'JetBrains Mono', 'SF Mono', monospace;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; overflow: hidden; }
+
+body {
+  font-family: var(--sans);
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+.app {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  height: 100vh;
+}
+
+/* === Header === */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 32px;
+  border-bottom: 1px solid var(--ink);
+  background: var(--bg);
+}
+.header-title {
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.header-title-accent {
+  color: var(--accent);
+  margin: 0 0.15em;
+}
+.header-sub {
+  font-size: 10px;
+  color: var(--ink-3);
+  letter-spacing: 0.2em;
+  margin-top: 4px;
+  font-family: var(--mono);
+  text-transform: uppercase;
+}
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.status {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-3);
+  max-width: 280px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.status.success { color: var(--success); }
+.status.error { color: var(--accent); }
+.status.loading { color: var(--warn); }
+.btn-import {
+  background: var(--ink);
+  color: var(--bg);
+  border: none;
+  padding: 9px 18px;
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.btn-import:hover { background: var(--accent); }
+
+/* === Main 3-column grid === */
+.main {
+  display: grid;
+  grid-template-columns: 220px 280px 1fr;
+  overflow: hidden;
+}
+@media (min-width: 1440px) {
+  .main { grid-template-columns: 240px 320px 1fr; }
+}
+@media (min-width: 1680px) {
+  .main { grid-template-columns: 260px 360px 1fr; }
+  .editor-content { max-width: 1200px; }
+  .field-input.large { font-size: 18px; }
+}
+@media (min-width: 1920px) {
+  body { background: var(--bg-elev); }
+  .app {
+    max-width: 1680px;
+    margin: 0 auto;
+    border-left: 1px solid var(--border);
+    border-right: 1px solid var(--border);
+    box-shadow: 0 0 60px rgba(0,0,0,0.04);
+  }
+  .main { grid-template-columns: 280px 400px 1fr; }
+  .editor-content { max-width: 1280px; padding: 32px 40px 30px; }
+  .field-input.large { font-size: 20px; }
+  .field-textarea { font-size: 14px; line-height: 1.8; }
+}
+@media (min-width: 2400px) {
+  .app { max-width: 1920px; }
+  .main { grid-template-columns: 320px 480px 1fr; }
+  .editor-content { max-width: 1400px; }
+}
+
+/* === Sidebar (column 1) === */
+.sidebar {
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  padding: 20px 0 60px;
+  background: var(--bg);
+}
+.sidebar-empty {
+  padding: 60px 24px;
+  text-align: center;
+  color: var(--ink-3);
+  font-size: 13px;
+  line-height: 1.7;
+}
+.sidebar-stats {
+  padding: 0 24px 16px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.sidebar-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.sidebar-stat-label {
+  font-size: 10px;
+  color: var(--ink-3);
+  font-family: var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+.sidebar-stat-value {
+  font-size: 22px;
+  font-weight: 500;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.sidebar-stat-value.ok { color: var(--success); }
+.sidebar-stat-value.warn { color: var(--warn); }
+
+.sidebar-day { margin-bottom: 20px; }
+.sidebar-day-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 0 24px 8px;
+  margin-bottom: 4px;
+}
+.sidebar-day-title {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.sidebar-day-meta {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink-3);
+}
+.match-item {
+  display: grid;
+  grid-template-columns: 42px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 24px;
+  cursor: pointer;
+  border-left: 2px solid transparent;
+  transition: background 0.12s;
+}
+.match-item:hover { background: var(--bg-elev); }
+.match-item.active {
+  background: var(--accent-soft);
+  border-left-color: var(--accent);
+}
+.match-time {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-2);
+}
+.match-name {
+  font-size: 12px;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.match-count {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink-3);
+  padding: 1px 6px;
+  border: 1px solid var(--border-2);
+  border-radius: 2px;
+  min-width: 24px;
+  text-align: center;
+}
+.match-item.active .match-count {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* === Article list (column 2) === */
+.article-list {
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+  background: var(--bg-panel);
+  display: flex;
+  flex-direction: column;
+}
+.alist-header {
+  padding: 18px 20px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+.alist-title {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin-bottom: 4px;
+  line-height: 1.3;
+}
+.alist-sub {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink-3);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+.alist-search {
+  width: 100%;
+  margin-top: 10px;
+  padding: 6px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border-2);
+  font-family: var(--sans);
+  font-size: 12px;
+  color: var(--ink);
+  outline: none;
+  transition: border-color 0.15s;
+}
+.alist-search:focus { border-color: var(--ink); }
+.alist-search::placeholder { color: var(--ink-3); }
+.alist-query {
+  width: 100%;
+  margin-top: 8px;
+  padding: 6px 10px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  font-family: var(--sans);
+  font-size: 12px;
+  color: var(--ink);
+  outline: none;
+  font-weight: 500;
+}
+.alist-query:focus { border-color: var(--ink); }
+.alist-query-label {
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  margin-top: 10px;
+  margin-bottom: 2px;
+}
+
+.alist-toolbar {
+  padding: 10px 20px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-2);
+  position: sticky;
+  top: 92px;
+  z-index: 9;
+}
+.alist-toolbar-btns {
+  display: flex;
+  gap: 8px;
+}
+.alist-tool-btn {
+  background: transparent;
+  border: 1px solid var(--border-2);
+  padding: 4px 10px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink-2);
+  cursor: pointer;
+  letter-spacing: 0.04em;
+  transition: all 0.15s;
+}
+.alist-tool-btn:hover { color: var(--ink); border-color: var(--ink); }
+.alist-tool-btn.primary {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+.alist-tool-btn.primary:hover { background: var(--ink); border-color: var(--ink); }
+.alist-tool-btn.primary:disabled {
+  background: var(--border-2);
+  color: var(--ink-3);
+  border-color: var(--border-2);
+  cursor: not-allowed;
+}
+
+.alist-items {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+.alist-empty {
+  padding: 60px 20px;
+  text-align: center;
+  color: var(--ink-3);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.article-item {
+  padding: 10px 20px 10px 16px;
+  cursor: pointer;
+  border-left: 2px solid transparent;
+  transition: background 0.1s;
+  display: grid;
+  grid-template-columns: 16px 1fr;
+  gap: 10px;
+  align-items: start;
+}
+.article-item:hover { background: var(--bg-elev); }
+.article-item.active {
+  background: var(--accent-soft);
+  border-left-color: var(--accent);
+}
+.article-item.selected {
+  background: var(--success-soft);
+}
+.article-item.selected.active {
+  background: var(--accent-soft);
+  border-left-color: var(--accent);
+}
+.article-checkbox {
+  margin-top: 3px;
+  cursor: pointer;
+  accent-color: var(--accent);
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+.article-content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.article-item-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink-3);
+  flex-wrap: wrap;
+}
+.article-item-edited {
+  color: var(--success);
+  font-weight: 500;
+  font-size: 9px;
+  padding: 1px 5px;
+  background: var(--success-soft);
+  border-radius: 2px;
+  letter-spacing: 0.04em;
+}
+.article-item-source {
+  color: var(--ink-2);
+  font-weight: 500;
+}
+.article-item-dot { color: var(--border-2); }
+.article-item-title {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--ink);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.article-item-quality {
+  display: inline-block;
+  font-size: 9px;
+  font-family: var(--mono);
+  padding: 1px 5px;
+  border-radius: 2px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+}
+.quality-ok { background: var(--success-soft); color: var(--success); }
+.quality-warn { background: var(--warn-soft); color: var(--warn); }
+.quality-bad { background: var(--accent-soft); color: var(--accent); }
+
+/* === Editor panel (column 3) === */
+.editor {
+  overflow-y: auto;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+}
+.editor-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 60px;
+  text-align: center;
+}
+.editor-empty-rule {
+  width: 48px;
+  height: 1px;
+  background: var(--ink);
+  margin-bottom: 24px;
+}
+.editor-empty-title {
+  font-size: 32px;
+  font-weight: 300;
+  color: var(--ink);
+  margin-bottom: 12px;
+  letter-spacing: -0.02em;
+}
+.editor-empty-sub {
+  font-size: 13px;
+  color: var(--ink-2);
+  max-width: 360px;
+  line-height: 1.7;
+}
+
+.editor-toolbar {
+  padding: 12px 24px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg);
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.editor-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-3);
+  flex-wrap: wrap;
+}
+.editor-toolbar-source {
+  color: var(--ink);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+.editor-copy-btns {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+  margin-right: 12px;
+}
+.copy-btn {
+  background: transparent;
+  border: 1px solid var(--border-2);
+  padding: 5px 10px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink-2);
+  cursor: pointer;
+  letter-spacing: 0.04em;
+  transition: all 0.15s;
+}
+.copy-btn:hover { color: var(--ink); border-color: var(--ink); background: var(--bg-elev); }
+.copy-btn.copied { background: var(--success-soft); color: var(--success); border-color: var(--success); }
+
+/* Icon-only copy button (inline next to each field) */
+.copy-icon {
+  background: transparent;
+  border: 1px solid var(--border-2);
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--ink-2);
+  font-size: 13px;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+.copy-icon:hover { color: var(--ink); border-color: var(--ink); background: var(--bg-elev); }
+.copy-icon.copied { background: var(--success-soft); color: var(--success); border-color: var(--success); }
+.field-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.field-row .field-input { flex: 1; }
+.field-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.field-label-row .field-label {
+  margin-bottom: 0;
+}
+.field-label-row .copy-icon {
+  width: 24px;
+  height: 24px;
+  font-size: 11px;
+}
+.editor-toolbar-right {
+  display: flex;
+  gap: 10px;
+}
+.btn-secondary {
+  background: transparent;
+  color: var(--ink-2);
+  border: 1px solid var(--border-2);
+  padding: 6px 12px;
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.btn-secondary:hover { color: var(--ink); border-color: var(--ink); }
+.btn-primary {
+  background: var(--accent);
+  color: white;
+  border: none;
+  padding: 6px 14px;
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.btn-primary:hover { background: var(--ink); }
+.btn-primary:disabled { background: var(--border-2); cursor: not-allowed; }
+
+.editor-content {
+  flex: 1;
+  padding: 24px 28px 30px;
+  max-width: 1080px;
+}
+
+.field {
+  margin-bottom: 24px;
+}
+.field-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink-3);
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.field-label-meta {
+  font-size: 10px;
+  color: var(--ink-3);
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+.field-input {
+  width: 100%;
+  background: var(--bg);
+  border: none;
+  border-bottom: 1px solid var(--border-2);
+  padding: 6px 0 8px;
+  font-family: var(--sans);
+  font-size: 13px;
+  color: var(--ink);
+  outline: none;
+  transition: border-color 0.15s;
+}
+.field-input:focus { border-bottom-color: var(--ink); }
+.field-input.large { font-size: 17px; font-weight: 500; }
+.field-textarea {
+  width: 100%;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  padding: 14px 16px;
+  font-family: var(--sans);
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--ink);
+  resize: vertical;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.field-textarea:focus { border-color: var(--ink); background: var(--bg); }
+.field-url-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.field-url-row .field-input { flex: 1; }
+.field-action {
+  font-size: 11px;
+  color: var(--accent);
+  text-decoration: none;
+  white-space: nowrap;
+  font-family: var(--mono);
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  padding: 0;
+}
+.field-action:hover { text-decoration: underline; }
+.field-action.copied { color: var(--success); }
+
+.field-stats {
+  margin-top: 8px;
+  display: flex;
+  gap: 16px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink-3);
+  letter-spacing: 0.04em;
+}
+.field-stats span strong { color: var(--ink); font-weight: 500; }
+
+/* === Drag overlay === */
+.drop-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(139, 30, 63, 0.06);
+  border: 3px dashed var(--accent);
+  z-index: 1000;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  backdrop-filter: blur(2px);
+}
+.drop-overlay.active { display: flex; }
+.drop-overlay-text {
+  font-size: 36px;
+  color: var(--accent);
+  font-weight: 300;
+  letter-spacing: -0.01em;
+}
+
+/* === Scrollbars === */
+.sidebar::-webkit-scrollbar,
+.alist-items::-webkit-scrollbar,
+.editor::-webkit-scrollbar { width: 6px; }
+.sidebar::-webkit-scrollbar-thumb,
+.alist-items::-webkit-scrollbar-thumb,
+.editor::-webkit-scrollbar-thumb {
+  background: var(--border-2);
+  border-radius: 3px;
+}
+
+.file-input { display: none; }
+.match-item, .article-item, .btn-import, .btn-primary, .btn-secondary { user-select: none; }
+
+/* Toast */
+.toast {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--ink);
+  color: var(--bg);
+  padding: 12px 24px;
+  font-size: 12px;
+  font-family: var(--mono);
+  letter-spacing: 0.04em;
+  z-index: 2000;
+  opacity: 0;
+  transition: opacity 0.2s;
+  pointer-events: none;
+}
+.toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <header class="header">
+    <div>
+      <div class="header-title">赛事<span class="header-title-accent">编辑台</span></div>
+      <div class="header-sub">World Cup 2026 · RAG Editor</div>
+    </div>
+    <div class="header-actions">
+      <div class="status" id="status">尚未导入</div>
+      <button class="btn-import" onclick="document.getElementById('fileInput').click()">导入 Excel</button>
+    </div>
+  </header>
+
+  <div class="main">
+    <!-- Column 1: matches -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-empty">导入 Excel<br>以开始</div>
+    </aside>
+
+    <!-- Column 2: article list -->
+    <section class="article-list">
+      <div class="alist-header">
+        <div class="alist-title" id="alistTitle">未选择比赛</div>
+        <div class="alist-sub" id="alistSub">选择左侧比赛查看文章</div>
+        <div class="alist-query-label">📂 RAG 查询词（所有文章共享）</div>
+        <input type="text" class="alist-query" id="alistQuery" placeholder="世界杯XvsY赛前预测" oninput="saveQueryTerm(this.value)">
+        <input type="text" class="alist-search" placeholder="搜索文章..." oninput="filterArticles(this.value)" id="alistSearch">
+      </div>
+      <div class="alist-toolbar" id="alistToolbar" style="display:none;">
+        <span id="alistSelected">未选</span>
+        <div class="alist-toolbar-btns">
+          <button class="alist-tool-btn" id="toggleSelectBtn" onclick="toggleSelectAll()">全选</button>
+          <button class="alist-tool-btn" onclick="invertSelection()">反选</button>
+          <button class="alist-tool-btn primary" id="exportSelectedBtn" onclick="exportSelected()" disabled>📥 导出选中</button>
+        </div>
+      </div>
+      <div class="alist-items" id="alistItems">
+        <div class="alist-empty">文章列表为空</div>
+      </div>
+    </section>
+
+    <!-- Column 3: editor -->
+    <main class="editor" id="editor">
+      <div class="editor-empty">
+        <div class="editor-empty-rule"></div>
+        <h2 class="editor-empty-title">选择一篇文章</h2>
+        <p class="editor-empty-sub">在中间栏点击任意文章，这里将显示完整内容供你编辑、清理广告、补全时间，并导出为 RAG 格式的 JSON。</p>
+      </div>
+    </main>
+  </div>
+</div>
+
+<div class="drop-overlay" id="dropOverlay">
+  <div class="drop-overlay-text">松开以导入</div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<input type="file" id="fileInput" class="file-input" accept=".xlsx,.xls" onchange="handleFile(event)">
+
+<script>
+let allData = [];
+let dayGroups = {};          // {day: [{name, time, day, articles: []}]}
+let currentMatch = null;     // {day, name}
+let currentArticle = null;   // {day, match, url}
+let currentArticleQuery = '';
+
+const STORAGE_PREFIX = 'wcedit_'; // edit storage prefix
+
+function setStatus(msg, type = '') {
+  const el = document.getElementById('status');
+  el.textContent = msg;
+  el.className = 'status ' + type;
+}
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2000);
+}
+
+/* === File handling === */
+function handleFile(event) {
+  const file = event.target.files[0];
+  if (file) readFile(file);
+  event.target.value = '';
+}
+
+function readFile(file) {
+  setStatus('解析中 ' + file.name + '…', 'loading');
+  const reader = new FileReader();
+  reader.onload = (e) => parseExcel(e.target.result, file.name);
+  reader.onerror = () => setStatus('读取失败', 'error');
+  reader.readAsArrayBuffer(file);
+}
+
+function parseExcel(buf, source) {
+  try {
+    const wb = XLSX.read(buf, {type: 'array'});
+    allData = [];
+    dayGroups = {};
+
+    wb.SheetNames.forEach(sheetName => {
+      const ws = wb.Sheets[sheetName];
+      const rows = XLSX.utils.sheet_to_json(ws, {defval: ''});
+      const matches = {};
+      rows.forEach(r => {
+        const item = {
+          day: sheetName,
+          date: r['日期'] || '',
+          time: r['北京时间'] || '',
+          round: r['轮次'] || '',
+          match: r['比赛'] || '',
+          title: r['标题'] || '',
+          source: r['来源'] || '',
+          url: r['URL'] || '',
+          summary: r['摘要'] || '',
+          content: r['正文'] || r['摘要'] || '',
+        };
+        allData.push(item);
+        if (!matches[item.match]) {
+          matches[item.match] = {name: item.match, time: item.time, day: sheetName, round: item.round, articles: []};
+        }
+        matches[item.match].articles.push(item);
+      });
+      dayGroups[sheetName] = Object.values(matches);
+    });
+
+    renderSidebar();
+    setStatus('已加载 · ' + allData.length + ' 篇', 'success');
+  } catch (e) {
+    setStatus('解析失败：' + e.message, 'error');
+  }
+}
+
+/* === Render functions === */
+function renderSidebar() {
+  const sb = document.getElementById('sidebar');
+  sb.innerHTML = '';
+
+  // Stats bar at top
+  let totalMatches = 0, totalArticles = 0;
+  let edited = 0;
+  Object.values(dayGroups).forEach(ms => {
+    totalMatches += ms.length;
+    ms.forEach(m => {
+      totalArticles += m.articles.length;
+      m.articles.forEach(a => {
+        if (localStorage.getItem(STORAGE_PREFIX + a.url)) edited++;
+      });
+    });
+  });
+
+  if (!totalMatches) {
+    sb.innerHTML = '<div class="sidebar-empty">导入 Excel<br>以开始</div>';
+    return;
+  }
+
+  const statsEl = document.createElement('div');
+  statsEl.className = 'sidebar-stats';
+  statsEl.innerHTML = `
+    <div class="sidebar-stat">
+      <div class="sidebar-stat-label">比赛</div>
+      <div class="sidebar-stat-value">${totalMatches}</div>
+    </div>
+    <div class="sidebar-stat">
+      <div class="sidebar-stat-label">文章</div>
+      <div class="sidebar-stat-value">${totalArticles}</div>
+    </div>
+    <div class="sidebar-stat">
+      <div class="sidebar-stat-label">已编辑</div>
+      <div class="sidebar-stat-value ok">${edited}</div>
+    </div>
+    <div class="sidebar-stat">
+      <div class="sidebar-stat-label">待处理</div>
+      <div class="sidebar-stat-value warn">${totalArticles - edited}</div>
+    </div>
+  `;
+  sb.appendChild(statsEl);
+
+  Object.keys(dayGroups).sort().forEach(day => {
+    const ms = dayGroups[day];
+    const daySection = document.createElement('div');
+    daySection.className = 'sidebar-day';
+
+    const header = document.createElement('div');
+    header.className = 'sidebar-day-header';
+    header.innerHTML = `
+      <div class="sidebar-day-title">${day}</div>
+      <div class="sidebar-day-meta">${ms.length}场</div>
+    `;
+    daySection.appendChild(header);
+
+    ms.sort((a, b) => a.time.localeCompare(b.time)).forEach(m => {
+      const item = document.createElement('div');
+      item.className = 'match-item';
+      if (currentMatch && currentMatch.day === day && currentMatch.name === m.name) {
+        item.classList.add('active');
+      }
+      // Count edited in this match
+      const editedInMatch = m.articles.filter(a => localStorage.getItem(STORAGE_PREFIX + a.url)).length;
+      const cntLabel = editedInMatch === m.articles.length && m.articles.length > 0
+        ? `${m.articles.length}✓`
+        : `${editedInMatch}/${m.articles.length}`;
+      item.innerHTML = `
+        <span class="match-time">${m.time}</span>
+        <span class="match-name">${escapeHtml(m.name)}</span>
+        <span class="match-count">${cntLabel}</span>
+      `;
+      item.onclick = () => {
+        currentMatch = {day, name: m.name};
+        currentArticle = null;
+        renderSidebar();
+        renderArticleList();
+        renderEditorEmpty();
+      };
+      daySection.appendChild(item);
+    });
+
+    sb.appendChild(daySection);
+  });
+}
+
+function renderArticleList() {
+  const titleEl = document.getElementById('alistTitle');
+  const subEl = document.getElementById('alistSub');
+  const itemsEl = document.getElementById('alistItems');
+  const toolbarEl = document.getElementById('alistToolbar');
+  itemsEl.innerHTML = '';
+
+  if (!currentMatch) {
+    titleEl.textContent = '未选择比赛';
+    subEl.textContent = '选择左侧比赛查看文章';
+    toolbarEl.style.display = 'none';
+    itemsEl.innerHTML = '<div class="alist-empty">请先选择一场比赛</div>';
+    return;
+  }
+
+  let match = null;
+  (dayGroups[currentMatch.day] || []).forEach(m => {
+    if (m.name === currentMatch.name) match = m;
+  });
+  if (!match) return;
+
+  titleEl.textContent = match.name;
+  subEl.textContent = `${currentMatch.day} · ${match.time} · ${match.articles.length} 篇`;
+  toolbarEl.style.display = 'flex';
+
+  // 填充 query_term 输入框（每场比赛共享一个）
+  const queryInput = document.getElementById('alistQuery');
+  const qKey = `wcquery_${currentMatch.day}_${currentMatch.name}`;
+  const savedQ = localStorage.getItem(qKey);
+  if (savedQ !== null) {
+    queryInput.value = savedQ;
+  } else {
+    // 默认值："世界杯<轮次><比赛名>赛前预测"，如 "世界杯小组赛第2轮阿根廷 vs 奥地利赛前预测"
+    const round = match.round ? match.round : '';
+    queryInput.value = `世界杯${round}${match.name}赛前预测`;
+    localStorage.setItem(qKey, queryInput.value);
+  }
+
+  // Count selected in this match
+  const selectedInMatch = match.articles.filter(a => localStorage.getItem('wcsel_' + a.url)).length;
+  updateSelectionUI(selectedInMatch, match.articles.length);
+
+  const q = currentArticleQuery;
+  let visible = 0;
+  match.articles.forEach(a => {
+    if (q) {
+      const hay = (a.title + ' ' + a.source + ' ' + a.url).toLowerCase();
+      if (!hay.includes(q)) return;
+    }
+    visible++;
+
+    const edited = localStorage.getItem(STORAGE_PREFIX + a.url);
+    const content = edited ? JSON.parse(edited).content : a.content;
+    const len = (content || '').length;
+    const quality = len >= 500 ? {cls: 'quality-ok', txt: '✓ ' + len} :
+                    len >= 200 ? {cls: 'quality-warn', txt: '⚠ ' + len} :
+                    {cls: 'quality-bad', txt: '✗ ' + len};
+
+    const isSelected = localStorage.getItem('wcsel_' + a.url);
+    const isActive = currentArticle && currentArticle.url === a.url;
+    const isEdited = localStorage.getItem(STORAGE_PREFIX + a.url);
+
+    const item = document.createElement('div');
+    item.className = 'article-item';
+    if (isActive) item.classList.add('active');
+    if (isSelected) item.classList.add('selected');
+
+    item.innerHTML = `
+      <input type="checkbox" class="article-checkbox" ${isSelected ? 'checked' : ''} data-url="${escapeAttr(a.url)}">
+      <div class="article-content">
+        <div class="article-item-meta">
+          <span class="article-item-source">${escapeHtml(a.source)}</span>
+          <span class="article-item-dot">·</span>
+          <span>${escapeHtml(a.date)} ${escapeHtml(a.time)}</span>
+          <span class="article-item-dot">·</span>
+          <span class="article-item-quality ${quality.cls}">${quality.txt}</span>
+          ${isEdited ? '<span class="article-item-dot">·</span><span class="article-item-edited">✎ 已编辑</span>' : ''}
+        </div>
+        <div class="article-item-title">${escapeHtml(a.title || '(无标题)')}</div>
+      </div>
+    `;
+
+    // Checkbox click: toggle selection (don't open editor)
+    item.querySelector('.article-checkbox').addEventListener('click', (e) => {
+      e.stopPropagation();
+      const cb = e.target;
+      if (cb.checked) {
+        localStorage.setItem('wcsel_' + a.url, '1');
+      } else {
+        localStorage.removeItem('wcsel_' + a.url);
+      }
+      renderArticleList();
+      renderSidebar();
+    });
+
+    // Row click: open editor
+    item.addEventListener('click', (e) => {
+      if (e.target.tagName === 'INPUT') return;
+      currentArticle = a;
+      renderArticleList();
+      renderEditor();
+    });
+
+    itemsEl.appendChild(item);
+  });
+
+  if (visible === 0) {
+    itemsEl.innerHTML = '<div class="alist-empty">无匹配文章</div>';
+  }
+}
+
+function updateSelectionUI(selected, total) {
+  const span = document.getElementById('alistSelected');
+  const btn = document.getElementById('exportSelectedBtn');
+  const toggleBtn = document.getElementById('toggleSelectBtn');
+  // toggle 按钮文字：未全选显示"全选"，已全选显示"取消全选"
+  if (toggleBtn) {
+    toggleBtn.textContent = selected === total && total > 0 ? '取消全选' : '全选';
+  }
+  if (selected === 0) {
+    span.textContent = `未选 / ${total}`;
+    span.style.color = 'var(--ink-3)';
+    btn.disabled = true;
+    btn.textContent = '📥 导出选中';
+  } else {
+    span.textContent = `已选 ${selected} / ${total}`;
+    span.style.color = 'var(--accent)';
+    btn.disabled = false;
+    btn.textContent = `📥 导出 ${selected} 篇`;
+  }
+}
+
+function toggleSelectAll() {
+  if (!currentMatch) return;
+  let match = null;
+  (dayGroups[currentMatch.day] || []).forEach(m => {
+    if (m.name === currentMatch.name) match = m;
+  });
+  if (!match) return;
+  const allSelected = match.articles.every(a => localStorage.getItem('wcsel_' + a.url));
+  if (allSelected) {
+    // 已全选 → 取消全选
+    match.articles.forEach(a => localStorage.removeItem('wcsel_' + a.url));
+  } else {
+    // 未全选 → 全选
+    match.articles.forEach(a => localStorage.setItem('wcsel_' + a.url, '1'));
+  }
+  renderArticleList();
+  renderSidebar();
+}
+
+function invertSelection() {
+  if (!currentMatch) return;
+  let match = null;
+  (dayGroups[currentMatch.day] || []).forEach(m => {
+    if (m.name === currentMatch.name) match = m;
+  });
+  if (!match) return;
+  match.articles.forEach(a => {
+    if (localStorage.getItem('wcsel_' + a.url)) {
+      localStorage.removeItem('wcsel_' + a.url);
+    } else {
+      localStorage.setItem('wcsel_' + a.url, '1');
+    }
+  });
+  renderArticleList();
+  renderSidebar();
+}
+
+function selectAllArticles() { toggleSelectAll(); }
+function clearSelection() {
+  if (!currentMatch) return;
+  (dayGroups[currentMatch.day] || []).forEach(m => {
+    if (m.name === currentMatch.name) {
+      m.articles.forEach(a => localStorage.removeItem('wcsel_' + a.url));
+    }
+  });
+  renderArticleList();
+  renderSidebar();
+}
+
+function saveQueryTerm(v) {
+  if (!currentMatch) return;
+  localStorage.setItem(`wcquery_${currentMatch.day}_${currentMatch.name}`, v);
+}
+
+function extractHostname(url) {
+  try {
+    const u = new URL(url);
+    return u.hostname.replace(/^www\./, '');
+  } catch {
+    return '';
+  }
+}
+
+function formatPublishTime(s) {
+  // 输入: "2026-06-22 23:53" 或 ISO 等 → "2026年06月22日"
+  if (!s) return '';
+  const m = s.match(/(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})/);
+  if (m) return `${m[1]}年${m[2].padStart(2,'0')}月${m[3].padStart(2,'0')}日`;
+  return s;
+}
+
+function toDateline(s) {
+  // 输入: "2026-06-22 23:53" → Unix timestamp (秒)
+  if (!s) return '';
+  const m = s.match(/(\d{4})-(\d{1,2})-(\d{1,2})[ T](\d{1,2}):(\d{2})/);
+  if (m) {
+    const d = new Date(m[1], m[2]-1, m[3], m[4], m[5]);
+    return Math.floor(d.getTime() / 1000).toString();
+  }
+  // fallback: 当前时间
+  return Math.floor(Date.now() / 1000).toString();
+}
+
+function exportSelected() {
+  if (!currentMatch) return;
+  let match = null;
+  (dayGroups[currentMatch.day] || []).forEach(m => {
+    if (m.name === currentMatch.name) match = m;
+  });
+  if (!match) return;
+
+  const selected = match.articles.filter(a => localStorage.getItem('wcsel_' + a.url));
+  if (selected.length === 0) {
+    showToast('未选中任何文章');
+    return;
+  }
+
+  // 查询词（每场比赛共享）
+  const query_term = localStorage.getItem(`wcquery_${currentMatch.day}_${currentMatch.name}`) || `世界杯${match.name}赛前预测`;
+
+  // 按 RAG 模板生成
+  const exportData = selected.map((a, idx) => {
+    const edited = localStorage.getItem(STORAGE_PREFIX + a.url);
+    const data = edited ? JSON.parse(edited) : {
+      title: a.title,
+      url: a.url,
+      published_at: `${a.date} ${a.time}`.trim(),
+      content: a.content,
+    };
+    return {
+      "id": String(idx + 1),
+      "query_term": query_term,
+      "pos": "1",
+      "publish_time": formatPublishTime(data.published_at),
+      "url": data.url,
+      "title": data.title,
+      "body": data.content,
+      "hostname": extractHostname(data.url),
+      "hostlogo": "",
+      "gw_tag": "",
+      "qtc": "0.001",
+      "source": "all",
+      "deadline": "",
+      "forbide_h5": "0",
+      "type": "",
+      "dateline": toDateline(data.published_at),
+    };
+  });
+
+  const dayKey = currentMatch.day.replace(/[月日]/g, '-').replace(/[^\d-]/g, '').replace(/-+/g, '-').replace(/^-|-$/g, '');
+  const matchKey = match.name.replace(/\s*vs\.?\s*|\s+v\.?\s*/gi, '_vs_').replace(/[^\w\u4e00-\u9fa5_]/g, '');
+  const fname = `rag_${dayKey}_${matchKey}_${selected.length}篇.json`;
+
+  const blob = new Blob([JSON.stringify(exportData, null, 2)], {type: 'application/json'});
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fname;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+
+  showToast(`已导出 ${fname}`);
+}
+
+function renderEditorEmpty() {
+  const editor = document.getElementById('editor');
+  editor.innerHTML = `
+    <div class="editor-empty">
+      <div class="editor-empty-rule"></div>
+      <h2 class="editor-empty-title">选择一篇文章</h2>
+      <p class="editor-empty-sub">在中间栏点击任意文章，这里将显示完整内容供你编辑、清理广告、补全时间，并导出为 RAG 格式的 JSON。</p>
+    </div>
+  `;
+}
+
+function renderEditor() {
+  if (!currentArticle) {
+    renderEditorEmpty();
+    return;
+  }
+  const a = currentArticle;
+  const editor = document.getElementById('editor');
+
+  // Merge with edits
+  const edited = localStorage.getItem(STORAGE_PREFIX + a.url);
+  const data = edited ? JSON.parse(edited) : {
+    title: a.title,
+    url: a.url,
+    published_at: `${a.date} ${a.time}`.trim(),
+    content: a.content,
+  };
+
+  const contentLen = (data.content || '').length;
+
+  // textarea 高度：用户手动 resize 过就用记住的值，否则动态计算撑满
+  const userH = parseInt(localStorage.getItem('wcTextareaHeight')) || 0;
+  // 估算其他元素总高度（header + toolbar + 3 个字段 + 正文 label + stats + padding）
+  // 实测后调整
+  const otherHeight = window.innerWidth >= 1920 ? 460 : (window.innerWidth >= 1680 ? 440 : 420);
+  const defaultH = Math.max(200, window.innerHeight - otherHeight - 30);  // 30 = 底部空隙
+  const textareaH = userH > 150 ? userH : defaultH;
+
+  editor.innerHTML = `
+    <div class="editor-toolbar">
+      <div class="editor-toolbar-left">
+        <span class="editor-toolbar-source">${escapeHtml(a.source)}</span>
+        <span>·</span>
+        <span>${escapeHtml(a.match)}</span>
+        <span>·</span>
+        <span>${escapeHtml(a.day)}</span>
+      </div>
+      <div class="editor-toolbar-right">
+        <button class="btn-secondary" onclick="resetEdit()">↻ 重置</button>
+      </div>
+    </div>
+    <div class="editor-content">
+      <div class="field">
+        <div class="field-label-row">
+          <div class="field-label">标题 <span class="field-label-meta">${(data.title || '').length} 字</span></div>
+          <button class="field-action" onclick="copyField('title', this)">复制</button>
+        </div>
+        <input type="text" class="field-input large" id="f-title" value="${escapeAttr(data.title)}" oninput="saveEdit()">
+      </div>
+      <div class="field">
+        <div class="field-label-row">
+          <div class="field-label">URL</div>
+        </div>
+        <div class="field-url-row">
+          <input type="text" class="field-input" id="f-url" value="${escapeAttr(data.url)}" oninput="saveEdit()">
+          <button class="field-action" onclick="copyField('url', this)">复制</button>
+          ${data.url ? `<a href="${escapeAttr(data.url)}" target="_blank" rel="noopener" class="field-action">↗ 打开原文</a>` : ''}
+        </div>
+      </div>
+      <div class="field">
+        <div class="field-label-row">
+          <div class="field-label">发布时间 <span class="field-label-meta">格式：YYYY-MM-DD HH:mm</span></div>
+        </div>
+        <input type="text" class="field-input" id="f-published" value="${escapeAttr(data.published_at)}" oninput="saveEdit()">
+      </div>
+      <div class="field">
+        <div class="field-label-row">
+          <div class="field-label">正文 <span class="field-label-meta" id="content-meta">${contentLen} 字</span></div>
+          <button class="field-action" onclick="copyField('content', this)">复制</button>
+        </div>
+        <textarea class="field-textarea" id="f-content" style="height: ${textareaH}px;" oninput="saveEdit()">${escapeHtml(data.content)}</textarea>
+        <div class="field-stats">
+          <span>字符数 <strong>${contentLen}</strong></span>
+          <span>估算阅读 <strong>${Math.max(1, Math.ceil(contentLen / 400))}</strong> 分钟</span>
+          <span>质量 <strong>${contentLen >= 500 ? '✓ 良好' : contentLen >= 200 ? '⚠ 一般' : '✗ 不足'}</strong></span>
+        </div>
+      </div>
+    </div>
+  `;
+
+  // 监听用户手动 resize textarea，记住高度
+  const ta = document.getElementById('f-content');
+  if (ta) {
+    let resizeTimer;
+    const observer = new MutationObserver(() => {
+      // textarea resize 不会触发 mutation，但用 ResizeObserver 更可靠
+    });
+    // 用 mouseup 检测用户拖动结束
+    ta.addEventListener('mouseup', () => {
+      const h = parseInt(ta.style.height);
+      if (h > 150) {
+        localStorage.setItem('wcTextareaHeight', h);
+      }
+    });
+    // 触屏
+    ta.addEventListener('touchend', () => {
+      const h = parseInt(ta.style.height);
+      if (h > 150) {
+        localStorage.setItem('wcTextareaHeight', h);
+      }
+    });
+  }
+}
+
+function copyField(field, btn) {
+  const el = document.getElementById('f-' + field);
+  if (!el) return;
+  const text = el.value;
+  const label = {title:'标题', url:'URL', published_at:'时间', content:'正文'}[field] || field;
+
+  // Method 1: select + execCommand (works in file://)
+  const done = () => {
+    if (btn) {
+      const original = btn.innerHTML;
+      btn.classList.add('copied');
+      btn.innerHTML = '✓ 已复制';
+      setTimeout(() => {
+        btn.classList.remove('copied');
+        btn.innerHTML = original;
+      }, 1200);
+    }
+    showToast('已复制 ' + label);
+  };
+
+  // 先选中文本（兼容 file://）
+  el.focus();
+  el.select();
+  let ok = false;
+  try {
+    ok = document.execCommand('copy');
+  } catch (e) {}
+  if (ok) {
+    done();
+    return;
+  }
+
+  // Fallback: Clipboard API
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done).catch(() => {
+      showToast('复制失败，请手动 Ctrl+C');
+    });
+  } else {
+    showToast('请按 Ctrl+C 复制选中内容');
+  }
+}
+
+function saveEdit() {
+  if (!currentArticle) return;
+  const data = {
+    title: document.getElementById('f-title').value,
+    url: document.getElementById('f-url').value,
+    published_at: document.getElementById('f-published').value,
+    content: document.getElementById('f-content').value,
+  };
+  localStorage.setItem(STORAGE_PREFIX + currentArticle.url, JSON.stringify(data));
+
+  // Update meta display
+  const meta = document.getElementById('content-meta');
+  if (meta) meta.textContent = data.content.length + ' 字';
+  // Update field stats
+  const stats = document.querySelector('.field-stats');
+  if (stats) {
+    const len = data.content.length;
+    stats.innerHTML = `
+      <span>字符数 <strong>${len}</strong></span>
+      <span>估算阅读 <strong>${Math.max(1, Math.ceil(len / 400))}</strong> 分钟</span>
+      <span>质量 <strong>${len >= 500 ? '✓ 良好' : len >= 200 ? '⚠ 一般' : '✗ 不足'}</strong></span>
+    `;
+  }
+  // Update sidebar stats without full re-render
+  // (deferred to avoid jank while typing)
+  clearTimeout(window._saveTimer);
+  window._saveTimer = setTimeout(() => {
+    renderSidebar();
+    renderArticleList();
+  }, 500);
+}
+
+function resetEdit() {
+  if (!currentArticle) return;
+  if (!confirm('确定重置本篇文章的所有编辑？')) return;
+  localStorage.removeItem(STORAGE_PREFIX + currentArticle.url);
+  renderEditor();
+  renderSidebar();
+  renderArticleList();
+  showToast('已重置');
+}
+
+function filterArticles(q) {
+  currentArticleQuery = q.trim().toLowerCase();
+  renderArticleList();
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({
+    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  })[c]);
+}
+function escapeAttr(s) { return escapeHtml(s).replace(/`/g, '&#96;'); }
+
+/* === Global drag-drop === */
+let dragCounter = 0;
+window.addEventListener('dragenter', (e) => {
+  if (e.dataTransfer && e.dataTransfer.types && e.dataTransfer.types.includes('Files')) {
+    dragCounter++;
+    document.getElementById('dropOverlay').classList.add('active');
+  }
+});
+window.addEventListener('dragleave', () => {
+  dragCounter--;
+  if (dragCounter <= 0) {
+    dragCounter = 0;
+    document.getElementById('dropOverlay').classList.remove('active');
+  }
+});
+window.addEventListener('dragover', (e) => e.preventDefault());
+window.addEventListener('drop', (e) => {
+  e.preventDefault();
+  dragCounter = 0;
+  document.getElementById('dropOverlay').classList.remove('active');
+  const file = e.dataTransfer.files[0];
+  if (file) readFile(file);
+});
+</script>
+</body>
+</html>
