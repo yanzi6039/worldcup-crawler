@@ -91,48 +91,8 @@ def run_crawl(sources: list[str], max_per_source: int, skip_existing: bool = Tru
              f"耗时 {time.time()-started:.1f}s")
 
 
-def _start_public_tunnel(port: int):
-    """启动 cloudflared 隧道获得公网 URL（免费，无需注册）"""
-    import subprocess
-    import threading
-    import re
-
-    tunnel_url = [None]
-
-    def _run():
-        try:
-            proc = subprocess.Popen(
-                ["cloudflared", "tunnel", "--url", f"http://localhost:{port}"],
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, bufsize=1,
-            )
-            for line in proc.stdout:
-                line = line.strip()
-                if "trycloudflare.com" in line:
-                    m = re.search(r'https://[^\s]+\.trycloudflare\.com', line)
-                    if m:
-                        tunnel_url[0] = m.group(0)
-                        log.info(f"🌍 公网地址: {tunnel_url[0]}")
-                        log.info(f"   比赛页面: {tunnel_url[0]}/matches")
-                        log.info(f"   新闻列表: {tunnel_url[0]}/")
-                        # 写文件方便查看
-                        with open(os.path.join(BASE_DIR, "tunnel_url.txt"), "w") as f:
-                            f.write(f"{tunnel_url[0]}\n{tunnel_url[0]}/matches\n")
-                if "failed" in line.lower() or "error" in line.lower():
-                    if "trycloudflare" not in line:  # 忽略 "failed to get tunnel" 等临时错误
-                        log.warning(f"  cloudflared: {line}")
-        except FileNotFoundError:
-            log.info("  cloudflared 未安装 (brew install cloudflared)，跳过公网隧道")
-        except Exception as e:
-            log.info(f"  cloudflared error: {e}")
-
-    t = threading.Thread(target=_run, daemon=True)
-    t.start()
-    return tunnel_url
-
-
 def serve_mode():
-    """启动 Web + 后台持续爬虫 + 公网隧道（24/7）"""
+    """启动 Web + 后台持续爬虫（24/7）"""
     log.info("🌐 启动 Web 服务 + 后台持续爬虫")
     try:
         from apscheduler.schedulers.background import BackgroundScheduler
@@ -161,9 +121,6 @@ def serve_mode():
         scheduler.start()
         log.info("✓ 随机爬虫已启动：API每30-60m / HTTP每1-2h / PW每2-4h")
         log.info("✓ 定时导出：每天 0:00 / 8:00")
-
-        # 公网隧道（pyngrok，办公电脑用它访问）
-        tunnel_url = _start_public_tunnel(WEB_PORT)
 
         log.info(f"💻 本地: http://localhost:{WEB_PORT}/matches")
         log.info(f"💻 本地: http://localhost:{WEB_PORT} (新闻列表)")

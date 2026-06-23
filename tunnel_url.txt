@@ -1,2 +1,0 @@
-https://api.trycloudflare.com
-https://api.trycloudflare.com/matches
