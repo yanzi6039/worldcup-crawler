@@ -109,6 +109,14 @@ body {
   grid-template-columns: 220px 280px 1fr;
   overflow: hidden;
 }
+/* 笔记本 (1200-1439px)：左侧稍宽避免截断，缩小间距 */
+@media (min-width: 1200px) and (max-width: 1439px) {
+  .main { grid-template-columns: 270px 310px 1fr; }
+  .sidebar { padding: 14px 0 40px; }
+  .article-list { font-size: 12px; }
+  .article-item { padding: 8px 14px 8px 10px; gap: 6px; }
+  .editor-content { padding: 16px 20px 20px; }
+}
 @media (min-width: 1440px) {
   .main { grid-template-columns: 240px 320px 1fr; }
 }
@@ -770,6 +778,7 @@ body {
         <div class="alist-toolbar-btns">
           <button class="alist-tool-btn" id="toggleSelectBtn" onclick="toggleSelectAll()">全选</button>
           <button class="alist-tool-btn" onclick="invertSelection()">反选</button>
+          <button class="alist-tool-btn" onclick="addBlankArticle()" style="color:var(--accent);">＋ 添加</button>
           <button class="alist-tool-btn primary" id="exportSelectedBtn" onclick="exportSelected()" disabled>📥 导出选中</button>
         </div>
       </div>
@@ -805,6 +814,41 @@ let currentArticle = null;   // {day, match, url}
 let currentArticleQuery = '';
 
 const STORAGE_PREFIX = 'wcedit_'; // edit storage prefix
+
+// 来源名 → 中文展示名
+const SOURCE_DISPLAY = {
+  zhibo8: '直播吧', dongqiudi: '懂球帝', dongqiudi_team: '懂球帝',
+  goal_pw: 'Goal.com', goal: 'Goal.com',
+  espn_pw: 'ESPN', espn: 'ESPN',
+  fourfourtwo: 'FourFourTwo', bbc_sport: 'BBC Sport',
+  skysports: 'Sky Sports', guardian: 'The Guardian',
+  theanalyst: 'The Analyst', theanalyst_api: 'The Analyst',
+  squawka: 'Squawka', sofascore: 'SofaScore',
+  kickoff: 'Kickoff', flashscore: 'FlashScore', flashscore_pw: 'FlashScore',
+  rotowire: 'Rotowire', '90min': '90min', fifa: 'FIFA',
+};
+function sourceDisplay(name) { return SOURCE_DISPLAY[name] || name; }
+
+// hostname → 中文展示名（导出用）
+function hostDisplay(url) {
+  try { const h = new URL(url).hostname.replace(/^www\./, ''); return SOURCE_DISPLAY[h] || h; }
+  catch { return url; }
+}
+// 视频内容检测
+function isVideoOnly(title, content) {
+  const t = (title || '').toLowerCase();
+  const c = (content || '').toLowerCase();
+  const kw = ['视频', '集锦', 'highlights', 'highlight', 'watch:', 'watch now', 'stream'];
+  const hasVideo = kw.some(k => t.includes(k) || c.includes(k));
+  const len = (content || '').length;
+  return hasVideo && len < 100;
+}
+// 乱码检测
+function looksGarbled(text) {
+  if (!text) return false;
+  const re = /[ÃÂÄÅ¡¢£¤¥¦§¨©ª«¬®¯°±²³´µ¶·¸¹º»¼½¾¿]{4,}|[ï¼ä½å¾ç±ç»ç§ä¸]{4,}/;
+  return re.test(text);
+}
 
 function setStatus(msg, type = '') {
   const el = document.getElementById('status');
@@ -845,6 +889,9 @@ function parseExcel(buf, source) {
       const rows = XLSX.utils.sheet_to_json(ws, {defval: ''});
       const matches = {};
       rows.forEach(r => {
+        const pubTime = r['发布时间'] || '';
+        // 发布时间优先用"发布时间"列，没有则用日期+北京时间（比赛时间）
+        const displayPub = pubTime || `${r['日期']||''} ${r['北京时间']||''}`.trim();
         const item = {
           day: sheetName,
           date: r['日期'] || '',
@@ -854,6 +901,8 @@ function parseExcel(buf, source) {
           title: r['标题'] || '',
           source: r['来源'] || '',
           url: r['URL'] || '',
+          published_at: pubTime,
+          display_time: displayPub,
           summary: r['摘要'] || '',
           content: r['正文'] || r['摘要'] || '',
         };
@@ -1004,8 +1053,21 @@ function renderArticleList() {
   updateSelectionUI(selectedInMatch, match.articles.length);
 
   const q = currentArticleQuery;
+  // 按发布时间降序排列；_isNew 始终排最前
+  const sorted = [...match.articles].sort((a, b) => {
+    if (a._isNew && !b._isNew) return -1;
+    if (!a._isNew && b._isNew) return 1;
+    const ta = a.published_at || a.display_time || '';
+    const tb = b.published_at || b.display_time || '';
+    if (ta && tb) return tb.localeCompare(ta);
+    if (ta && !tb) return -1;
+    if (!ta && tb) return 1;
+    return 0;
+  });
   let visible = 0;
-  match.articles.forEach(a => {
+  sorted.forEach(a => {
+    // 跳过已删除
+    if (localStorage.getItem('wcdeleted_' + a.url)) return;
     if (q) {
       const hay = (a.title + ' ' + a.source + ' ' + a.url).toLowerCase();
       if (!hay.includes(q)) return;
@@ -1015,13 +1077,19 @@ function renderArticleList() {
     const edited = localStorage.getItem(STORAGE_PREFIX + a.url);
     const content = edited ? JSON.parse(edited).content : a.content;
     const len = (content || '').length;
-    const quality = len >= 500 ? {cls: 'quality-ok', txt: '✓ ' + len} :
-                    len >= 200 ? {cls: 'quality-warn', txt: '⚠ ' + len} :
-                    {cls: 'quality-bad', txt: '✗ ' + len};
+    const video = isVideoOnly(a.title, a.content);
+    const garbled = looksGarbled(a.title) || looksGarbled(a.content);
+    let quality = len >= 500 ? {cls: 'quality-ok', txt: '✓ ' + len} :
+                  len >= 200 ? {cls: 'quality-warn', txt: '⚠ ' + len} :
+                  {cls: 'quality-bad', txt: '✗ ' + len};
+    if (video) quality = {cls: 'quality-bad', txt: '🎬 视频'};
+    if (garbled) quality = {cls: 'quality-bad', txt: '乱码'};
 
     const isSelected = localStorage.getItem('wcsel_' + a.url);
     const isActive = currentArticle && currentArticle.url === a.url;
     const isEdited = localStorage.getItem(STORAGE_PREFIX + a.url);
+
+    const pubTime = a.display_time || a.published_at || '';
 
     const item = document.createElement('div');
     item.className = 'article-item';
@@ -1032,9 +1100,9 @@ function renderArticleList() {
       <input type="checkbox" class="article-checkbox" ${isSelected ? 'checked' : ''} data-url="${escapeAttr(a.url)}">
       <div class="article-content">
         <div class="article-item-meta">
-          <span class="article-item-source">${escapeHtml(a.source)}</span>
+          <span class="article-item-source">${escapeHtml(sourceDisplay(a.source))}</span>
           <span class="article-item-dot">·</span>
-          <span>${escapeHtml(a.date)} ${escapeHtml(a.time)}</span>
+          <span>${escapeHtml(pubTime || '无时间')}</span>
           <span class="article-item-dot">·</span>
           <span class="article-item-quality ${quality.cls}">${quality.txt}</span>
           ${isEdited ? '<span class="article-item-dot">·</span><span class="article-item-edited">✎ 已编辑</span>' : ''}
@@ -1059,6 +1127,10 @@ function renderArticleList() {
     // Row click: open editor
     item.addEventListener('click', (e) => {
       if (e.target.tagName === 'INPUT') return;
+      // 切换文章时，去掉旧文章的 _isNew 标记（自动按时间排序）
+      if (currentArticle && currentArticle !== a && currentArticle._isNew) {
+        delete currentArticle._isNew;
+      }
       currentArticle = a;
       renderArticleList();
       renderEditor();
@@ -1199,18 +1271,19 @@ function exportSelected() {
     const data = edited ? JSON.parse(edited) : {
       title: a.title,
       url: a.url,
-      published_at: `${a.date} ${a.time}`.trim(),
+      published_at: a.display_time || a.published_at || '',
       content: a.content,
     };
     return {
       "id": String(idx + 1),
       "query_term": query_term,
-      "pos": "1",
+      "pos": String(idx + 1),
       "publish_time": formatPublishTime(data.published_at),
       "url": data.url,
       "title": data.title,
       "body": data.content,
       "hostname": extractHostname(data.url),
+      "host_name": hostDisplay(data.url),
       "hostlogo": "",
       "gw_tag": "",
       "qtc": "0.001",
@@ -1263,7 +1336,7 @@ function renderEditor() {
   const data = edited ? JSON.parse(edited) : {
     title: a.title,
     url: a.url,
-    published_at: `${a.date} ${a.time}`.trim(),
+    published_at: a.display_time || a.published_at || '',
     content: a.content,
   };
 
@@ -1280,7 +1353,7 @@ function renderEditor() {
   editor.innerHTML = `
     <div class="editor-toolbar">
       <div class="editor-toolbar-left">
-        <span class="editor-toolbar-source">${escapeHtml(a.source)}</span>
+        <span class="editor-toolbar-source">${escapeHtml(sourceDisplay(a.source))}</span>
         <span>·</span>
         <span>${escapeHtml(a.match)}</span>
         <span>·</span>
@@ -1288,6 +1361,7 @@ function renderEditor() {
       </div>
       <div class="editor-toolbar-right">
         <button class="btn-secondary" onclick="resetEdit()">↻ 重置</button>
+        <button class="btn-secondary" onclick="deleteArticle()" style="color:var(--accent);border-color:var(--accent);">🗑 删除</button>
       </div>
     </div>
     <div class="editor-content">
@@ -1435,6 +1509,53 @@ function resetEdit() {
   renderSidebar();
   renderArticleList();
   showToast('已重置');
+}
+
+function deleteArticle() {
+  // 标记为已删除（添加 _deleted 到 localStorage，重新导入后自动消失）
+  if (!currentArticle) return;
+  if (!confirm(`确定删除文章「${currentArticle.title}」？\n（重新导入 Excel 后将恢复）`)) return;
+  localStorage.setItem('wcdeleted_' + currentArticle.url, '1');
+  currentArticle = null;
+  renderSidebar();
+  renderArticleList();
+  renderEditorEmpty();
+  showToast('已删除（重新导入后恢复）');
+}
+
+function addBlankArticle() {
+  if (!currentMatch) return;
+  const now = new Date();
+  const ts = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+  const item = {
+    day: currentMatch.day, date: '', time: '', round: '',
+    match: currentMatch.name,
+    title: '',
+    source: 'manual',
+    url: 'manual://' + Date.now(),
+    published_at: ts,
+    display_time: ts,
+    summary: '',
+    content: '',
+    _isNew: true,
+  };
+  // 保存之前的 article，去掉其 _isNew 标记
+  if (currentArticle && currentArticle._isNew) {
+    delete currentArticle._isNew;
+  }
+  allData.push(item);
+  const ms = dayGroups[currentMatch.day] || [];
+  let match = ms.find(m => m.name === currentMatch.name);
+  if (!match) {
+    match = {name: currentMatch.name, time: '', day: currentMatch.day, round: '', articles: []};
+    ms.push(match);
+    dayGroups[currentMatch.day] = ms;
+  }
+  match.articles.push(item);
+  currentArticle = item;
+  renderSidebar();
+  renderArticleList();
+  renderEditor();
 }
 
 function filterArticles(q) {
