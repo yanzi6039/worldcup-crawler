@@ -333,7 +333,7 @@ def _export_and_push():
         from openpyxl import Workbook
         from openpyxl.styles import Font, Alignment
 
-        matches = store.list_upcoming_matches(days=4, only_scheduled=False)
+        matches = store.list_upcoming_matches(days=4, only_scheduled=False, from_tomorrow=True)
         news = store.list_news(limit=5000, exclude_video=True)
 
         from collections import defaultdict

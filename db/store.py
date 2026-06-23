@@ -246,8 +246,12 @@ def get_source_by_name(name: str):
 
 # ============ 比赛相关（从 match_store.py 注入） ============
 
-def list_upcoming_matches(days=4, only_scheduled=True):
-    """未来比赛。自动过滤已开始（kickoff_at < now）。返回按时间正序。"""
+def list_upcoming_matches(days=4, only_scheduled=True, from_tomorrow=False):
+    """未来比赛。自动过滤已开始（kickoff_at < now）。返回按时间正序。
+
+    from_tomorrow=True: 跳过"今天"（按北京时间），从明天 00:00 开始算 N 天。
+    用于定时推送：今天的比赛数据已稳定，没意义。
+    """
     sql = """
         SELECT m.*,
                hc.name_cn AS home_cn, hc.name_en AS home_en,
@@ -256,14 +260,28 @@ def list_upcoming_matches(days=4, only_scheduled=True):
         FROM matches m
         LEFT JOIN countries hc ON hc.id = m.home_country_id
         LEFT JOIN countries ac ON ac.id = m.away_country_id
-        WHERE m.kickoff_at > datetime('now')
-          AND m.kickoff_at <= datetime('now', ?)
+        WHERE m.kickoff_at > ?
+          AND m.kickoff_at <= ?
     """
     if only_scheduled:
         sql += " AND m.status = 'scheduled'"
     sql += " ORDER BY m.kickoff_at"
+
+    # 计算时间窗口（都用 UTC 字符串，与 kickoff_at 存储一致）
+    from datetime import datetime, timezone, timedelta
+    BJ_TZ = timezone(timedelta(hours=8))
+    now_bj = datetime.now(BJ_TZ)
+    if from_tomorrow:
+        # 北京时间明天 00:00 作为起点
+        start_bj = (now_bj + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    else:
+        start_bj = now_bj
+    end_bj = start_bj + timedelta(days=days) if from_tomorrow else now_bj + timedelta(days=days)
+    start_utc = start_bj.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    end_utc = end_bj.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
     with conn_ctx() as conn:
-        rows = conn.execute(sql, (f"+{days} days",)).fetchall()
+        rows = conn.execute(sql, (start_utc, end_utc)).fetchall()
         return [dict(r) for r in rows]
 
 
