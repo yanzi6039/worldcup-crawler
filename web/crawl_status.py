@@ -20,6 +20,16 @@ class CrawlStatus:
         self._lock = threading.Lock()
         self._subscribers: list[Queue] = []
         self._data = self._load()
+        # 启动时清理陈旧状态：若上次爬取超过 10 分钟还标记为 running，
+        # 必然是进程异常退出留下的脏状态（finish_crawl 未调用）
+        if self._data.get("running"):
+            started_at = self._data.get("started_at") or 0
+            if time.time() - started_at > 600:  # 10 分钟
+                log.warning(f"检测到陈旧 running 状态（启动于 {time.ctime(started_at)}），自动重置")
+                self._data["running"] = False
+                self._data["current_source"] = ""
+                self._data["started_at"] = None
+                self._save()
 
     def _load(self):
         try:
