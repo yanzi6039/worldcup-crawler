@@ -35,6 +35,21 @@ ALL_SCRAPERS = {**TIER1_SCRAPERS}
 log = logging.getLogger("runner")
 
 
+# Canonical scheduled sources. If a site has multiple implementations, only the
+# selected source name should appear here.
+SCHEDULED_SOURCE_GROUPS = {
+    "API": ["dongqiudi", "espn_pw", "theanalyst_api", "bbc_sport", "skysports", "90min", "guardian"],
+    "HTTP": ["theanalyst", "fourfourtwo", "rotowire"],
+    "PW": ["sofascore", "squawka", "fifa", "goal_pw"],
+}
+
+SCHEDULED_MAX_PER_SOURCE = {
+    "API": 20,
+    "HTTP": 15,
+    "PW": 10,
+}
+
+
 def setup_logging(verbose=False):
     level = logging.DEBUG if verbose else logging.INFO
     logging.basicConfig(
@@ -181,7 +196,11 @@ def _crawl_one_source(name: str, max_per: int):
     from scrapers.per_source import PER_SOURCE_SCRAPERS
     from web.crawl_status import crawl_status
 
-    all_scrapers = {**TIER1_SCRAPERS, **PLAYWRIGHT_SCRAPERS, **PER_SOURCE_SCRAPERS}
+    all_scrapers = {
+        **TIER1_SCRAPERS,
+        **PLAYWRIGHT_SCRAPERS,
+        **PER_SOURCE_SCRAPERS,
+    }
     cls = all_scrapers.get(name)
     if not cls:
         return
@@ -201,9 +220,17 @@ def _crawl_one_source(name: str, max_per: int):
 
 def _crawl_tier(tier_name: str, source_names: list[str], max_per: int):
     """并发爬指定 tier 的源（最多 3 个同时）"""
-    from concurrent.futures import ThreadPoolExecutor, as_completed
     from web.crawl_status import crawl_status
 
+    if tier_name.upper() == "PW":
+        for name in source_names:
+            try:
+                _crawl_one_source(name, max_per)
+            except Exception as e:
+                crawl_status.log_event(f"  ✗ {name}: {e}", "error")
+        return
+
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     with ThreadPoolExecutor(max_workers=3) as pool:
         futures = {pool.submit(_crawl_one_source, name, max_per): name for name in source_names}
         for fut in as_completed(futures):
@@ -238,9 +265,21 @@ def _random_crawl_cycle():
     # HTTP: 每 12 桶（60 min）触发一次，桶号 2
     # PW: 每 24 桶（120 min）触发一次，桶号 4
     triggers = {
-        "API":  (bucket % 6 == 0,  ["dongqiudi", "espn_pw", "theanalyst_api", "bbc_sport", "skysports", "90min", "guardian"], 20),
-        "HTTP": (bucket % 12 == 2, ["theanalyst", "flashscore", "goal", "fourfourtwo", "rotowire", "kickoff"], 15),
-        "PW":   (bucket % 24 == 4, ["sofascore", "squawka", "fifa", "espn", "goal_pw"], 10),
+        "API": (
+            bucket % 6 == 0,
+            SCHEDULED_SOURCE_GROUPS["API"],
+            SCHEDULED_MAX_PER_SOURCE["API"],
+        ),
+        "HTTP": (
+            bucket % 12 == 2,
+            SCHEDULED_SOURCE_GROUPS["HTTP"],
+            SCHEDULED_MAX_PER_SOURCE["HTTP"],
+        ),
+        "PW": (
+            bucket % 24 == 4,
+            SCHEDULED_SOURCE_GROUPS["PW"],
+            SCHEDULED_MAX_PER_SOURCE["PW"],
+        ),
     }
 
     any_ran = False
@@ -320,22 +359,18 @@ def _load_env():
 
 
 def _export_and_push():
-    """导出 4 天 Excel → push 到 GitHub → 钉钉通知"""
+    """导出合并 4 天 Excel + viewer 包 → push 到 GitHub → 钉钉通知"""
     import subprocess
-    import io as _io
+    import zipfile
 
-    log.info("📊 定时导出 Excel...")
+    log.info("📊 定时导出合并 Excel...")
     _load_env()
 
     try:
-        # 生成 Excel
         from db import store
-        from openpyxl import Workbook
-        from openpyxl.styles import Font, Alignment
+        from generate_combined_xlsx import main as generate_combined_xlsx
 
         matches = store.list_upcoming_matches(days=4, only_scheduled=False, from_tomorrow=True)
-        news = store.list_news(limit=5000, exclude_video=True)
-
         from collections import defaultdict
         from web.timezone_utils import beijing_day
 
@@ -352,50 +387,17 @@ def _export_and_push():
         repo = os.environ.get("GITHUB_REPO", "")
         dingtalk_token = os.environ.get("DINGTALK_WEBHOOK_URL", "")
 
-        files_pushed = []
-
-        for day, day_ms in sorted(day_matches.items()):
-            if day == "未定":
-                continue
-
-            wb = Workbook()
-            for i, m in enumerate(day_ms):
-                home = f"{m.get('home_cn','') or m.get('home_en','')}"
-                away = f"{m.get('away_cn','') or m.get('away_en','')}"
-                sheet_name = f"{home}vs{away}"[:31]
-                cnt = m.get("article_count", 0) or 0
-
-                if i == 0:
-                    ws = wb.active
-                    ws.title = sheet_name
-                else:
-                    ws = wb.create_sheet(sheet_name)
-
-                ws.append(["标题", "来源", "时间", "URL", "摘要"])
-                for cell in ws[1]:
-                    cell.font = Font(bold=True)
-
-                articles = store.list_match_news(m["id"], include_content=False)
-                for n in articles:
-                    ws.append([
-                        n.get("title", ""),
-                        n.get("source_name", ""),
-                        (n.get("published_at") or "")[:19],
-                        n.get("url", ""),
-                        (n.get("summary") or "")[:150],
-                    ])
-                ws.column_dimensions['A'].width = 60
-                ws.column_dimensions['B'].width = 18
-                ws.column_dimensions['D'].width = 50
-
-            day_short = day.replace("2026-", "")  # 0623
-            day_display = day[5:].replace("-", "月") + "日"  # 6月23日
-            update_date = time.strftime('%m%d')
-            xlsx_name = f"worldcup_{day_short.replace('-','')}_{update_date}update.xlsx"
-            xlsx_path = os.path.join(export_dir, xlsx_name)
-            wb.save(xlsx_path)
-            files_pushed.append((day_display, xlsx_name))
-            log.info(f"✓ {day_display} → {xlsx_name} ({len(day_ms)} 场)")
+        generate_combined_xlsx()
+        xlsx_name = "worldcup_4days_latest.xlsx"
+        xlsx_path = os.path.join(export_dir, xlsx_name)
+        package_name = "worldcup_rag_viewer.zip"
+        package_path = os.path.join(export_dir, package_name)
+        with zipfile.ZipFile(package_path, "w", zipfile.ZIP_DEFLATED) as z:
+            z.write(os.path.join(BASE_DIR, "viewer.html"), "viewer.html")
+            z.write(xlsx_path, xlsx_name)
+        files_pushed = [xlsx_name, package_name]
+        log.info(f"✓ 合并 Excel → {xlsx_name}")
+        log.info(f"✓ viewer 包 → {package_name}")
 
         # Push
         if token and repo and files_pushed:
@@ -403,9 +405,13 @@ def _export_and_push():
             if not os.path.exists(gitkeep):
                 with open(gitkeep, "w") as f: pass
 
-            subprocess.run(["git", "-C", BASE_DIR, "add", "data/"], capture_output=True)
+            subprocess.run([
+                "git", "-C", BASE_DIR, "add",
+                os.path.join("data", xlsx_name),
+                os.path.join("data", package_name),
+            ], capture_output=True)
             subprocess.run(["git", "-C", BASE_DIR, "commit", "-m",
-                           f"Auto export {time.strftime('%m%d')}"], capture_output=True)
+                           f"Auto export combined {time.strftime('%m%d')}"], capture_output=True)
 
             push_url = f"https://{token}@github.com/{repo}.git"
             r = subprocess.run(["git", "-C", BASE_DIR, "-c", "http.sslVerify=false", "push", push_url, "main"],
@@ -415,20 +421,22 @@ def _export_and_push():
             else:
                 log.warning(f"Git push failed: {r.stderr[:100]}")
 
-        # 钉钉通知（纯文本，含每场比赛详情）
+        # 钉钉通知（纯文本，含合并文件链接 + 每场比赛详情）
         if dingtalk_token and files_pushed:
             import requests as req
             from web.timezone_utils import to_beijing
 
-            lines = ["⚽ 世界杯数据更新"]
+            xlsx_url = f"https://raw.githubusercontent.com/{repo}/main/data/{xlsx_name}"
+            package_url = f"https://raw.githubusercontent.com/{repo}/main/data/{package_name}"
+            lines = [
+                "⚽ 世界杯合并数据更新",
+                f"Excel: {xlsx_url}",
+                f"HTML+Excel包: {package_url}",
+            ]
             for day, day_ms in sorted(day_matches.items()):
                 if day == "未定":
                     continue
                 day_display = day[5:].replace("-", "月") + "日"
-                day_short = day.replace("2026-", "").replace("-", "")
-                update_date = time.strftime('%m%d')
-                xlsx_name = f"worldcup_{day_short}_{update_date}update.xlsx"
-                download_url = f"https://github.com/{repo}/raw/main/data/{xlsx_name}"
 
                 lines.append(f"\n{day_display}")
                 for m in day_ms:
@@ -438,8 +446,6 @@ def _export_and_push():
                     cnt = m.get("article_count", 0) or 0
                     lines.append(f"赛程: 北京时间{bj_time} {home}vs{away}")
                     lines.append(f"数据量: {cnt}条")
-                lines.append(f"excel: {xlsx_name}")
-                lines.append(f"下载: {download_url}")
 
             text = "\n".join(lines)
             try:

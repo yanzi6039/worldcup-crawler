@@ -346,6 +346,11 @@ body {
   transition: all 0.15s;
 }
 .alist-tool-btn:hover { color: var(--ink); border-color: var(--ink); }
+.alist-tool-btn.is-active {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
 .alist-tool-btn.primary {
   background: var(--accent);
   color: white;
@@ -394,6 +399,13 @@ body {
   background: var(--accent-soft);
   border-left-color: var(--accent);
 }
+.article-item.filtered {
+  opacity: 0.62;
+}
+.article-item.filtered:hover,
+.article-item.filtered.active {
+  opacity: 1;
+}
 .article-checkbox {
   margin-top: 3px;
   cursor: pointer;
@@ -440,6 +452,25 @@ body {
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+.article-item-title-cn {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--ink);
+  font-weight: 500;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.article-item-title-en {
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--ink-2);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
 .article-item-quality {
   display: inline-block;
   font-size: 9px;
@@ -452,6 +483,27 @@ body {
 .quality-ok { background: var(--success-soft); color: var(--success); }
 .quality-warn { background: var(--warn-soft); color: var(--warn); }
 .quality-bad { background: var(--accent-soft); color: var(--accent); }
+.article-item-relevance {
+  display: inline-block;
+  font-size: 9px;
+  font-family: var(--mono);
+  padding: 1px 5px;
+  border-radius: 2px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+}
+.rel-direct { background: var(--success-soft); color: var(--success); }
+.rel-related { background: var(--warn-soft); color: var(--warn); }
+.rel-filtered { background: var(--accent-soft); color: var(--accent); }
+.article-item-reason {
+  font-size: 10px;
+  line-height: 1.35;
+  color: var(--ink-3);
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
 
 /* === Editor panel (column 3) === */
 .editor {
@@ -778,6 +830,7 @@ body {
         <div class="alist-toolbar-btns">
           <button class="alist-tool-btn" id="toggleSelectBtn" onclick="toggleSelectAll()">全选</button>
           <button class="alist-tool-btn" onclick="invertSelection()">反选</button>
+          <button class="alist-tool-btn" id="toggleFilteredBtn" onclick="toggleFilteredArticles()">显示泛文章</button>
           <button class="alist-tool-btn" onclick="addBlankArticle()" style="color:var(--accent);">＋ 添加</button>
           <button class="alist-tool-btn primary" id="exportSelectedBtn" onclick="exportSelected()" disabled>📥 导出选中</button>
         </div>
@@ -812,6 +865,7 @@ let dayGroups = {};          // {day: [{name, time, day, articles: []}]}
 let currentMatch = null;     // {day, name}
 let currentArticle = null;   // {day, match, url}
 let currentArticleQuery = '';
+let showFilteredArticles = localStorage.getItem('wcshow_filtered_articles') === '1';
 
 const STORAGE_PREFIX = 'wcedit_'; // edit storage prefix
 
@@ -848,6 +902,32 @@ function looksGarbled(text) {
   if (!text) return false;
   const re = /[ÃÂÄÅ¡¢£¤¥¦§¨©ª«¬®¯°±²³´µ¶·¸¹º»¼½¾¿]{4,}|[ï¼ä½å¾ç±ç»ç§ä¸]{4,}/;
   return re.test(text);
+}
+function relevanceClass(label) {
+  if (label === '直接对阵') return 'rel-direct';
+  if (label === '已过滤' || label === '泛文章') return 'rel-filtered';
+  return 'rel-related';
+}
+function isFilteredArticle(a) {
+  return a.relevance === '已过滤' || a.relevance === '泛文章' || Number(a.relevance_score || 0) <= 0;
+}
+function articleMatchesSearch(a, q) {
+  if (!q) return true;
+  const hay = (a.title + ' ' + a.title_cn + ' ' + a.source + ' ' + a.url + ' ' + a.relevance_reason).toLowerCase();
+  return hay.includes(q);
+}
+function visibleArticlesForMatch(match, applySearch = false) {
+  const q = applySearch ? currentArticleQuery : '';
+  return match.articles.filter(a => {
+    if (localStorage.getItem('wcdeleted_' + a.url)) return false;
+    if (!showFilteredArticles && isFilteredArticle(a)) return false;
+    return articleMatchesSearch(a, q);
+  });
+}
+function relevanceText(a) {
+  const label = a.relevance || '未评分';
+  const score = Number(a.relevance_score || 0);
+  return score > 0 ? `${label} ${score.toFixed(2)}` : label;
 }
 
 function setStatus(msg, type = '') {
@@ -899,12 +979,17 @@ function parseExcel(buf, source) {
           round: r['轮次'] || '',
           match: r['比赛'] || '',
           title: r['标题'] || '',
+          title_cn: r['中文标题'] || '',
           source: r['来源'] || '',
           url: r['URL'] || '',
           published_at: pubTime,
           display_time: displayPub,
           summary: r['摘要'] || '',
           content: r['正文'] || r['摘要'] || '',
+          relevance: r['相关性'] || '',
+          relevance_score: Number(r['相关性分'] || 0),
+          relevance_reason: r['命中原因'] || '',
+          linked_match_count: Number(r['关联场次'] || 1),
         };
         allData.push(item);
         if (!matches[item.match]) {
@@ -928,13 +1013,15 @@ function renderSidebar() {
   sb.innerHTML = '';
 
   // Stats bar at top
-  let totalMatches = 0, totalArticles = 0;
+  let totalMatches = 0, totalArticles = 0, totalVisibleArticles = 0;
   let edited = 0;
   Object.values(dayGroups).forEach(ms => {
     totalMatches += ms.length;
     ms.forEach(m => {
       totalArticles += m.articles.length;
-      m.articles.forEach(a => {
+      const visibleForStats = visibleArticlesForMatch(m);
+      totalVisibleArticles += visibleForStats.length;
+      visibleForStats.forEach(a => {
         if (localStorage.getItem(STORAGE_PREFIX + a.url)) edited++;
       });
     });
@@ -954,7 +1041,7 @@ function renderSidebar() {
     </div>
     <div class="sidebar-stat">
       <div class="sidebar-stat-label">文章</div>
-      <div class="sidebar-stat-value">${totalArticles}</div>
+      <div class="sidebar-stat-value">${totalVisibleArticles === totalArticles ? totalArticles : `${totalVisibleArticles}/${totalArticles}`}</div>
     </div>
     <div class="sidebar-stat">
       <div class="sidebar-stat-label">已编辑</div>
@@ -962,7 +1049,7 @@ function renderSidebar() {
     </div>
     <div class="sidebar-stat">
       <div class="sidebar-stat-label">待处理</div>
-      <div class="sidebar-stat-value warn">${totalArticles - edited}</div>
+      <div class="sidebar-stat-value warn">${totalVisibleArticles - edited}</div>
     </div>
   `;
   sb.appendChild(statsEl);
@@ -986,11 +1073,11 @@ function renderSidebar() {
       if (currentMatch && currentMatch.day === day && currentMatch.name === m.name) {
         item.classList.add('active');
       }
-      // Count edited in this match
-      const editedInMatch = m.articles.filter(a => localStorage.getItem(STORAGE_PREFIX + a.url)).length;
-      const cntLabel = editedInMatch === m.articles.length && m.articles.length > 0
-        ? `${m.articles.length}✓`
-        : `${editedInMatch}/${m.articles.length}`;
+      const visibleInMatch = visibleArticlesForMatch(m).length;
+      const editedInMatch = visibleArticlesForMatch(m).filter(a => localStorage.getItem(STORAGE_PREFIX + a.url)).length;
+      const cntLabel = visibleInMatch === m.articles.length
+        ? (editedInMatch === visibleInMatch && visibleInMatch > 0 ? `${visibleInMatch}✓` : `${editedInMatch}/${visibleInMatch}`)
+        : `${visibleInMatch}/${m.articles.length}`;
       item.innerHTML = `
         <span class="match-time">${m.time}</span>
         <span class="match-name">${escapeHtml(m.name)}</span>
@@ -1032,8 +1119,17 @@ function renderArticleList() {
   if (!match) return;
 
   titleEl.textContent = match.name;
-  subEl.textContent = `${currentMatch.day} · ${match.time} · ${match.articles.length} 篇`;
+  const selectableArticles = visibleArticlesForMatch(match);
+  const availableCount = match.articles.filter(a => !isFilteredArticle(a) && !localStorage.getItem('wcdeleted_' + a.url)).length;
+  const hiddenCount = Math.max(0, match.articles.length - selectableArticles.length);
+  subEl.textContent = `${currentMatch.day} · ${match.time} · ${selectableArticles.length}/${match.articles.length} 篇${hiddenCount && !showFilteredArticles ? ` · 已隐藏 ${hiddenCount} 篇泛文章` : ''}`;
   toolbarEl.style.display = 'flex';
+  const toggleFilteredBtn = document.getElementById('toggleFilteredBtn');
+  if (toggleFilteredBtn) {
+    toggleFilteredBtn.textContent = showFilteredArticles ? '隐藏泛文章' : '显示泛文章';
+    toggleFilteredBtn.classList.toggle('is-active', showFilteredArticles);
+    toggleFilteredBtn.disabled = availableCount === match.articles.length;
+  }
 
   // 填充 query_term 输入框（每场比赛共享一个）
   const queryInput = document.getElementById('alistQuery');
@@ -1049,14 +1145,16 @@ function renderArticleList() {
   }
 
   // Count selected in this match
-  const selectedInMatch = match.articles.filter(a => localStorage.getItem('wcsel_' + a.url)).length;
-  updateSelectionUI(selectedInMatch, match.articles.length);
+  const selectedInMatch = selectableArticles.filter(a => localStorage.getItem('wcsel_' + a.url)).length;
+  updateSelectionUI(selectedInMatch, selectableArticles.length);
 
-  const q = currentArticleQuery;
   // 按发布时间降序排列；_isNew 始终排最前
-  const sorted = [...match.articles].sort((a, b) => {
+  const sorted = visibleArticlesForMatch(match, true).sort((a, b) => {
     if (a._isNew && !b._isNew) return -1;
     if (!a._isNew && b._isNew) return 1;
+    const ra = Number(a.relevance_score || 0);
+    const rb = Number(b.relevance_score || 0);
+    if (ra !== rb) return rb - ra;
     const ta = a.published_at || a.display_time || '';
     const tb = b.published_at || b.display_time || '';
     if (ta && tb) return tb.localeCompare(ta);
@@ -1066,12 +1164,6 @@ function renderArticleList() {
   });
   let visible = 0;
   sorted.forEach(a => {
-    // 跳过已删除
-    if (localStorage.getItem('wcdeleted_' + a.url)) return;
-    if (q) {
-      const hay = (a.title + ' ' + a.source + ' ' + a.url).toLowerCase();
-      if (!hay.includes(q)) return;
-    }
     visible++;
 
     const edited = localStorage.getItem(STORAGE_PREFIX + a.url);
@@ -1095,6 +1187,15 @@ function renderArticleList() {
     item.className = 'article-item';
     if (isActive) item.classList.add('active');
     if (isSelected) item.classList.add('selected');
+    if (isFilteredArticle(a)) item.classList.add('filtered');
+
+    const relLabel = relevanceText(a);
+    const relClass = relevanceClass(a.relevance || '');
+    const relReason = a.relevance_reason || (a.linked_match_count > 1 ? `已关联 ${a.linked_match_count} 场` : '');
+    const titleHtml = a.title_cn && a.title_cn !== a.title
+      ? `<div class="article-item-title-cn">${escapeHtml(a.title_cn)}</div>
+         <div class="article-item-title-en">${escapeHtml(a.title || '(无标题)')}</div>`
+      : `<div class="article-item-title">${escapeHtml(a.title || '(无标题)')}</div>`;
 
     item.innerHTML = `
       <input type="checkbox" class="article-checkbox" ${isSelected ? 'checked' : ''} data-url="${escapeAttr(a.url)}">
@@ -1104,10 +1205,14 @@ function renderArticleList() {
           <span class="article-item-dot">·</span>
           <span>${escapeHtml(pubTime || '无时间')}</span>
           <span class="article-item-dot">·</span>
+          <span class="article-item-relevance ${relClass}">${escapeHtml(relLabel)}</span>
+          ${a.linked_match_count > 1 ? `<span class="article-item-dot">·</span><span>${a.linked_match_count}场</span>` : ''}
+          <span class="article-item-dot">·</span>
           <span class="article-item-quality ${quality.cls}">${quality.txt}</span>
           ${isEdited ? '<span class="article-item-dot">·</span><span class="article-item-edited">✎ 已编辑</span>' : ''}
         </div>
-        <div class="article-item-title">${escapeHtml(a.title || '(无标题)')}</div>
+        ${titleHtml}
+        ${relReason ? `<div class="article-item-reason">${escapeHtml(relReason)}</div>` : ''}
       </div>
     `;
 
@@ -1172,13 +1277,14 @@ function toggleSelectAll() {
     if (m.name === currentMatch.name) match = m;
   });
   if (!match) return;
-  const allSelected = match.articles.every(a => localStorage.getItem('wcsel_' + a.url));
+  const selectable = visibleArticlesForMatch(match);
+  const allSelected = selectable.length > 0 && selectable.every(a => localStorage.getItem('wcsel_' + a.url));
   if (allSelected) {
     // 已全选 → 取消全选
-    match.articles.forEach(a => localStorage.removeItem('wcsel_' + a.url));
+    selectable.forEach(a => localStorage.removeItem('wcsel_' + a.url));
   } else {
     // 未全选 → 全选
-    match.articles.forEach(a => localStorage.setItem('wcsel_' + a.url, '1'));
+    selectable.forEach(a => localStorage.setItem('wcsel_' + a.url, '1'));
   }
   renderArticleList();
   renderSidebar();
@@ -1191,7 +1297,7 @@ function invertSelection() {
     if (m.name === currentMatch.name) match = m;
   });
   if (!match) return;
-  match.articles.forEach(a => {
+  visibleArticlesForMatch(match).forEach(a => {
     if (localStorage.getItem('wcsel_' + a.url)) {
       localStorage.removeItem('wcsel_' + a.url);
     } else {
@@ -1207,7 +1313,7 @@ function clearSelection() {
   if (!currentMatch) return;
   (dayGroups[currentMatch.day] || []).forEach(m => {
     if (m.name === currentMatch.name) {
-      m.articles.forEach(a => localStorage.removeItem('wcsel_' + a.url));
+      visibleArticlesForMatch(m).forEach(a => localStorage.removeItem('wcsel_' + a.url));
     }
   });
   renderArticleList();
@@ -1256,7 +1362,7 @@ function exportSelected() {
   });
   if (!match) return;
 
-  const selected = match.articles.filter(a => localStorage.getItem('wcsel_' + a.url));
+  const selected = visibleArticlesForMatch(match).filter(a => localStorage.getItem('wcsel_' + a.url));
   if (selected.length === 0) {
     showToast('未选中任何文章');
     return;
@@ -1270,6 +1376,7 @@ function exportSelected() {
     const edited = localStorage.getItem(STORAGE_PREFIX + a.url);
     const data = edited ? JSON.parse(edited) : {
       title: a.title,
+      title_cn: a.title_cn || '',
       url: a.url,
       published_at: a.display_time || a.published_at || '',
       content: a.content,
@@ -1281,6 +1388,7 @@ function exportSelected() {
       "publish_time": formatPublishTime(data.published_at),
       "url": data.url,
       "title": data.title,
+      "title_cn": data.title_cn || "",
       "body": data.content,
       "hostname": extractHostname(data.url),
       "host_name": hostDisplay(data.url),
@@ -1335,6 +1443,7 @@ function renderEditor() {
   const edited = localStorage.getItem(STORAGE_PREFIX + a.url);
   const data = edited ? JSON.parse(edited) : {
     title: a.title,
+    title_cn: a.title_cn || '',
     url: a.url,
     published_at: a.display_time || a.published_at || '',
     content: a.content,
@@ -1346,7 +1455,7 @@ function renderEditor() {
   const userH = parseInt(localStorage.getItem('wcTextareaHeight')) || 0;
   // 估算其他元素总高度（header + toolbar + 3 个字段 + 正文 label + stats + padding）
   // 实测后调整
-  const otherHeight = window.innerWidth >= 1920 ? 460 : (window.innerWidth >= 1680 ? 440 : 420);
+  const otherHeight = window.innerWidth >= 1920 ? 510 : (window.innerWidth >= 1680 ? 490 : 470);
   const defaultH = Math.max(200, window.innerHeight - otherHeight - 30);  // 30 = 底部空隙
   const textareaH = userH > 150 ? userH : defaultH;
 
@@ -1354,6 +1463,8 @@ function renderEditor() {
     <div class="editor-toolbar">
       <div class="editor-toolbar-left">
         <span class="editor-toolbar-source">${escapeHtml(sourceDisplay(a.source))}</span>
+        <span>·</span>
+        <span>${escapeHtml(relevanceText(a))}</span>
         <span>·</span>
         <span>${escapeHtml(a.match)}</span>
         <span>·</span>
@@ -1371,6 +1482,13 @@ function renderEditor() {
           <button class="field-action" onclick="copyField('title', this)">复制</button>
         </div>
         <input type="text" class="field-input large" id="f-title" value="${escapeAttr(data.title)}" oninput="saveEdit()">
+      </div>
+      <div class="field">
+        <div class="field-label-row">
+          <div class="field-label">中文标题 <span class="field-label-meta">人工辅助判断，可留空</span></div>
+          <button class="field-action" onclick="copyField('title-cn', this)">复制</button>
+        </div>
+        <input type="text" class="field-input" id="f-title-cn" value="${escapeAttr(data.title_cn || '')}" oninput="saveEdit()">
       </div>
       <div class="field">
         <div class="field-label-row">
@@ -1431,7 +1549,7 @@ function copyField(field, btn) {
   const el = document.getElementById('f-' + field);
   if (!el) return;
   const text = el.value;
-  const label = {title:'标题', url:'URL', published_at:'时间', content:'正文'}[field] || field;
+  const label = {title:'标题', 'title-cn':'中文标题', url:'URL', published_at:'时间', content:'正文'}[field] || field;
 
   // Method 1: select + execCommand (works in file://)
   const done = () => {
@@ -1473,6 +1591,7 @@ function saveEdit() {
   if (!currentArticle) return;
   const data = {
     title: document.getElementById('f-title').value,
+    title_cn: document.getElementById('f-title-cn').value,
     url: document.getElementById('f-url').value,
     published_at: document.getElementById('f-published').value,
     content: document.getElementById('f-content').value,
@@ -1531,12 +1650,17 @@ function addBlankArticle() {
     day: currentMatch.day, date: '', time: '', round: '',
     match: currentMatch.name,
     title: '',
+    title_cn: '',
     source: 'manual',
     url: 'manual://' + Date.now(),
     published_at: ts,
     display_time: ts,
     summary: '',
     content: '',
+    relevance: '手动添加',
+    relevance_score: 1,
+    relevance_reason: '人工添加',
+    linked_match_count: 1,
     _isNew: true,
   };
   // 保存之前的 article，去掉其 _isNew 标记
@@ -1560,6 +1684,13 @@ function addBlankArticle() {
 
 function filterArticles(q) {
   currentArticleQuery = q.trim().toLowerCase();
+  renderArticleList();
+}
+
+function toggleFilteredArticles() {
+  showFilteredArticles = !showFilteredArticles;
+  localStorage.setItem('wcshow_filtered_articles', showFilteredArticles ? '1' : '0');
+  renderSidebar();
   renderArticleList();
 }
 

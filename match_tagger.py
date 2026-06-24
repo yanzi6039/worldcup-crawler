@@ -14,7 +14,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
 
 from db import store
-from match_keywords import generate_match_keywords, article_matches_tier
+from match_keywords import generate_match_keywords, score_article_for_match
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("match_tagger")
@@ -24,12 +24,6 @@ def tag_match(match: dict) -> int:
     """为单场比赛找关联新闻，返回关联数（先清旧链接再重建）"""
     match_id = match["id"]
     kws = generate_match_keywords(match)
-
-    # 补充 _home_only / _away_only 给 article_matches_tier 用
-    from match_keywords import _load_country_keywords
-    cmap = _load_country_keywords()
-    kws["_home_only"] = cmap.get(match["home_country_id"], [])
-    kws["_away_only"] = cmap.get(match["away_country_id"], [])
 
     home_label = match.get("home_en") or match.get("home_cn") or f"team{match['home_country_id']}"
     away_label = match.get("away_en") or match.get("away_cn") or f"team{match['away_country_id']}"
@@ -45,9 +39,10 @@ def tag_match(match: dict) -> int:
     linked = 0
     tier_counts = {"A": 0, "B": 0, "C": 0, "D": 0, "E": 0}
     for n in all_news:
-        tier = article_matches_tier(n.get("title", ""), n.get("content", ""), kws)
+        relevance = score_article_for_match(n.get("title", ""), n.get("content", ""), kws)
+        tier = relevance.get("tier")
         if tier:
-            store.insert_match_link(n["id"], match_id, tier)
+            store.insert_match_link(n["id"], match_id, tier, relevance.get("score", 1.0))
             linked += 1
             tier_counts[tier] = tier_counts.get(tier, 0) + 1
 

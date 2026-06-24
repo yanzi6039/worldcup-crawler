@@ -425,19 +425,33 @@ def _is_too_old(date_str: str) -> bool:
     if not date_str:
         return False
     # 尝试多种格式解析
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
+    from email.utils import parsedate_to_datetime
+    raw = re.sub(r"\s+", " ", date_str.strip())
+    candidates = [raw]
+    if raw.endswith("Z"):
+        candidates.append(raw[:-1] + "+00:00")
+    try:
+        dt = parsedate_to_datetime(raw)
+        if dt.tzinfo:
+            dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+        age = datetime.now(timezone.utc).replace(tzinfo=None) - dt
+        return age.days >= NEWS_MAX_AGE_DAYS
+    except Exception:
+        pass
+
     for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S%z",
                 "%Y-%m-%dT%H:%M:%SZ", "%a, %d %b %Y %H:%M:%S %z",
                 "%a, %d %b %Y %H:%M:%S %Z", "%d %b %Y %H:%M:%S %z"):
-        try:
-            dt = datetime.strptime(date_str[:26], fmt)
-            # 统一到 naive UTC 比较（近似）
-            if dt.tzinfo:
-                from datetime import timezone
-                dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
-            age = datetime.utcnow() - dt
-            return age.days >= NEWS_MAX_AGE_DAYS
-        except Exception:
-            continue
+        for candidate in candidates:
+            try:
+                dt = datetime.strptime(candidate, fmt)
+                # 统一到 naive UTC 比较（近似）
+                if dt.tzinfo:
+                    dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+                age = datetime.now(timezone.utc).replace(tzinfo=None) - dt
+                return age.days >= NEWS_MAX_AGE_DAYS
+            except Exception:
+                continue
     # 解析不出来就不挡（保守）
     return False

@@ -15,6 +15,7 @@ import re
 import xml.etree.ElementTree as ET
 from urllib.parse import urljoin
 from datetime import datetime
+from email.utils import parsedate_to_datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -95,14 +96,23 @@ def _normalize_date(s: str) -> str:
     """各种日期格式归一化为 YYYY-MM-DD HH:MM:SS"""
     if not s:
         return ""
+    raw = re.sub(r"\s+", " ", s.strip())
+    try:
+        return parsedate_to_datetime(raw).strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        pass
+
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+
     # RFC822: "Sun, 21 Jun 2026 14:00:00 +0000"
     for fmt in ("%a, %d %b %Y %H:%M:%S %z", "%d %b %Y %H:%M:%S %z",
                 "%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%d %H:%M:%S"):
         try:
-            return datetime.strptime(s[:26], fmt).strftime("%Y-%m-%d %H:%M:%S")
+            return datetime.strptime(raw, fmt).strftime("%Y-%m-%d %H:%M:%S")
         except Exception:
             pass
-    return s[:19]  # 兜底截断
+    return raw[:19]  # 兜底截断
 
 
 # ============ FourFourTwo（RSS） ============

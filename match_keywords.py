@@ -14,6 +14,7 @@
 import os
 import sys
 import json
+import re
 import logging
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -26,6 +27,7 @@ log = logging.getLogger("match_keywords")
 # 缓存国家关键词
 _COUNTRY_KW_CACHE = None
 _PLAYER_KW_CACHE = None
+_COUNTRY_NAME_CACHE = None
 
 
 def _load_country_keywords() -> dict:
@@ -66,6 +68,93 @@ def _load_player_keywords(country_id: int = None) -> list:
         names = [n for n in names if n and len(n) >= 3]
         kws.append(names)
     return kws
+
+
+def _load_country_names() -> dict:
+    """国家 ID -> 展示名，用于相关性解释。"""
+    global _COUNTRY_NAME_CACHE
+    if _COUNTRY_NAME_CACHE is None:
+        names = {}
+        for c in store.list_countries():
+            names[c["id"]] = c.get("name_cn") or c.get("name_en") or str(c["id"])
+        _COUNTRY_NAME_CACHE = names
+    return _COUNTRY_NAME_CACHE
+
+
+def _contains_kw(text: str, kw: str) -> bool:
+    """关键词命中：英文用词边界，中文/混合文本用子串。"""
+    if not text or not kw:
+        return False
+    text_l = text.lower()
+    kw_l = kw.lower().strip()
+    if not kw_l:
+        return False
+    if all(ord(ch) < 128 for ch in kw_l):
+        return re.search(r"(?<![a-z0-9])" + re.escape(kw_l) + r"(?![a-z0-9])", text_l) is not None
+    return kw_l in text_l
+
+
+def _hits(text: str, words: list[str]) -> list[str]:
+    out = []
+    for w in words:
+        if w and _contains_kw(text, w):
+            out.append(w)
+    return list(dict.fromkeys(out))
+
+
+def _country_mentions(text: str) -> set[int]:
+    """粗略识别文本里出现的国家，用于发现第三方对阵污染。"""
+    mentions = set()
+    cmap = _load_country_keywords()
+    for cid, words in cmap.items():
+        if any(_contains_kw(text, w) for w in words):
+            mentions.add(cid)
+    return mentions
+
+
+def _has_match_signal(text: str) -> bool:
+    """是否像一场具体比赛，而不是泛世界杯文章。"""
+    if not text:
+        return False
+    text_l = text.lower()
+    return bool(
+        re.search(r"\b(vs\.?|v\.?|versus|against)\b", text_l)
+        or re.search(r"[\u4e00-\u9fa5a-zA-Z]+[ -]?\d+[ -]?\d+[ -]?[\u4e00-\u9fa5a-zA-Z]+", text_l)
+        or any(s in text_l for s in ["对阵", "迎战", "击败", "不敌", "战胜", "战平"])
+    )
+
+
+def _is_generic_worldcup_title(title: str) -> bool:
+    """明显泛用、容易被分到多场比赛的标题。"""
+    title_l = (title or "").lower()
+    generic_patterns = [
+        "fixtures and results",
+        "complete eastern time",
+        "complete pacific time",
+        "complete mountain time",
+        "kickoff times",
+        "tv channel",
+        "how to watch",
+        "fubo",
+        "free trials",
+        "subscription",
+        "routes to the final",
+        "top scorers",
+        "records",
+        "appearances by a player",
+        "red cards in world cup history",
+        "team of the day",
+        "power rankings",
+        "host the 2038 world cup",
+        "qualification for the world cup knockout",
+        "intra-group teams finish level",
+    ]
+    generic_cn = ["赛程", "积分榜", "午报", "早报", "盘点", "纪录", "集锦", "视频"]
+    return any(p in title_l for p in generic_patterns) or any(p in (title or "") for p in generic_cn)
+
+
+def _make_result(tier=None, score=0.0, label="已过滤", reason="未命中当前比赛核心信息"):
+    return {"tier": tier, "score": score, "label": label, "reason": reason}
 
 
 def generate_match_keywords(match: dict) -> dict:
@@ -183,70 +272,118 @@ def generate_match_keywords(match: dict) -> dict:
         "tier_C": dedupe(tier_C)[:40],
         "tier_D": dedupe(tier_D)[:8],
         "tier_E": dedupe(tier_E)[:6],
+        "_home_only": dedupe(cmap.get(home_id, [])),
+        "_away_only": dedupe(cmap.get(away_id, [])),
+        "_home_id": home_id,
+        "_away_id": away_id,
+        "_home_label": home_cn or home_en_short,
+        "_away_label": away_cn or away_en_short,
+        "_group": group or "",
     }
 
 
+def score_article_for_match(title: str, content: str, keywords: dict) -> dict:
+    """
+    返回文章对当前比赛的相关性。
+    核心原则：标题优先；只靠正文宽泛出现两队不再足以入选。
+    """
+    title = title or ""
+    body = (content or "")[:5000]
+    search_text = f"{title}\n{body[:1500]}"
+
+    home_id = keywords.get("_home_id")
+    away_id = keywords.get("_away_id")
+    current_ids = {home_id, away_id}
+    home_label = keywords.get("_home_label") or "home"
+    away_label = keywords.get("_away_label") or "away"
+
+    home_title_hits = _hits(title, keywords.get("_home_only", []))
+    away_title_hits = _hits(title, keywords.get("_away_only", []))
+    home_body_hits = _hits(body, keywords.get("_home_only", []))
+    away_body_hits = _hits(body, keywords.get("_away_only", []))
+
+    title_mentions = _country_mentions(title)
+    third_title_mentions = title_mentions - current_ids
+    generic_title = _is_generic_worldcup_title(title)
+
+    # 标题像另一场比赛时，直接挡掉。例：Brazil vs Haiti 不应进入 Morocco vs Haiti。
+    if third_title_mentions and (home_title_hits or away_title_hits) and _has_match_signal(title):
+        names = _load_country_names()
+        third = ", ".join(names.get(cid, str(cid)) for cid in sorted(third_title_mentions))
+        return _make_result(
+            reason=f"标题像其他对阵，包含第三方球队：{third}"
+        )
+    if third_title_mentions and ((home_title_hits and not away_title_hits) or (away_title_hits and not home_title_hits)):
+        names = _load_country_names()
+        third = ", ".join(names.get(cid, str(cid)) for cid in sorted(third_title_mentions))
+        return _make_result(
+            reason=f"标题只命中当前一队，并聚焦第三方球队：{third}"
+        )
+    if third_title_mentions and not (home_title_hits or away_title_hits):
+        names = _load_country_names()
+        third = ", ".join(names.get(cid, str(cid)) for cid in sorted(third_title_mentions))
+        return _make_result(
+            reason=f"标题聚焦第三方球队：{third}"
+        )
+
+    # 泛用世界杯文章没有当前两队标题命中时，不进入比赛包。
+    if generic_title and not (home_title_hits or away_title_hits):
+        return _make_result(reason="泛世界杯/赛程/盘点类标题，未命中当前两队")
+
+    # Tier A：标题明确当前对阵。
+    for kw in keywords.get("tier_A", []):
+        if _contains_kw(title, kw):
+            return _make_result("A", 1.0, "直接对阵", f"标题命中当前对阵：{kw}")
+    if home_title_hits and away_title_hits:
+        return _make_result("A", 0.96, "直接对阵", f"标题同时命中：{home_label} / {away_label}")
+
+    intent_signals = [
+        "preview", "prediction", "predictions", "team news", "lineup", "lineups",
+        "squad", "injury", "injuries", "odds", "best bets", "stats", "tactical",
+        "analysis", "must win", "qualify", "standings", "前瞻", "预测", "阵容",
+        "首发", "伤病", "出线", "形势", "分析", "数据", "赔率", "战"
+    ]
+    has_intent = any(s in title.lower() for s in intent_signals) or any(s in title for s in intent_signals)
+
+    # Tier B：标题有当前一队 + 明确赛前/球队/形势语境。
+    for kw in keywords.get("tier_B", []):
+        if _contains_kw(title, kw):
+            return _make_result("B", 0.82, "单队相关", f"标题命中赛前语境：{kw}")
+    if (home_title_hits or away_title_hits) and has_intent:
+        side = home_label if home_title_hits else away_label
+        return _make_result("B", 0.78, "单队相关", f"标题命中当前球队和赛前语境：{side}")
+
+    # 正文同时出现两队，只有在标题也至少命中一队时才算弱相关。
+    if (home_body_hits and away_body_hits) and (home_title_hits or away_title_hits):
+        return _make_result("B", 0.70, "弱相关", "正文同时提到两队，标题命中其中一队")
+
+    # Tier C：当前两队球员只在标题里命中才收，避免正文长文误挂。
+    for kw in keywords.get("tier_C", []):
+        if _contains_kw(title, kw):
+            return _make_result("C", 0.62, "球员相关", f"标题命中当前球队球员：{kw}")
+
+    # Tier D：同组/积分形势，要求标题或正文同时出现当前球队。
+    for kw in keywords.get("tier_D", []):
+        if _contains_kw(title, kw) and (home_title_hits or away_title_hits):
+            return _make_result("D", 0.48, "同组背景", f"标题命中小组语境：{kw}")
+        if _contains_kw(search_text, kw) and (home_body_hits or away_body_hits):
+            return _make_result("D", 0.42, "同组背景", f"正文命中小组语境：{kw}")
+
+    # Tier E：历史交锋，要求正文里有明确 H2H 关键词。
+    for kw in keywords.get("tier_E", []):
+        if _contains_kw(search_text, kw):
+            return _make_result("E", 0.58, "历史交锋", f"命中历史交锋：{kw}")
+
+    if home_title_hits or away_title_hits:
+        side = home_label if home_title_hits else away_label
+        return _make_result("D", 0.40, "弱相关", f"仅标题命中当前球队：{side}")
+
+    return _make_result()
+
+
 def article_matches_tier(title: str, content: str, keywords: dict) -> str | None:
-    """
-    判断一篇文章命中哪一层 tier，返回 'A'/'B'/'C'/'D'/'E' 或 None
-    标题权重更高，正文取前 3000 字
-    """
-    title_l = (title or "").lower()
-    body_l = (content or "")[:5000].lower()
-
-    home_words = [k.lower() for k in keywords.get("_home_only", [])]
-    away_words = [k.lower() for k in keywords.get("_away_only", [])]
-    home_in_title = any(k in title_l for k in home_words)
-    away_in_title = any(k in title_l for k in away_words)
-    home_in_body = any(k in body_l for k in home_words)
-    away_in_body = any(k in body_l for k in away_words)
-
-    # Tier A：标题含 "X vs Y" 关键词，或标题含双方国名
-    for kw in keywords["tier_A"]:
-        if kw.lower() in title_l:
-            return "A"
-    if home_in_title and away_in_title:
-        return "A"
-
-    # 正文含双方国名 → 只能是 B 级（正文宽泛，容易误匹配）
-    if home_in_body and away_in_body:
-        return "B"
-
-    # Tier B：标题含单方+语境词（中英双语）
-    for kw in keywords["tier_B"]:
-        if kw.lower() in title_l:
-            return "B"
-    # 标题含单方国名 + 含世界杯通用语境词
-    wc_signals = ["world cup", "世界杯", "前瞻", "预测", "preview", "prediction", "squad", "阵容", "战报"]
-    if (home_in_title or away_in_title) and any(s in title_l for s in wc_signals):
-        return "B"
-
-    # Tier C：球员名在标题或正文
-    for kw in keywords["tier_C"]:
-        kwl = kw.lower()
-        if len(kwl) < 3:
-            continue
-        if kwl in title_l:
-            return "C"
-    # 球员在正文（只有标题没命中时才扫正文，避免过多 C 级 match）
-    for kw in keywords["tier_C"]:
-        kwl = kw.lower()
-        if len(kwl) < 3:
-            continue
-        if kwl in body_l:
-            return "C"
-
-    # Tier D：小组名
-    for kw in keywords["tier_D"]:
-        if kw.lower() in title_l or kw.lower() in body_l:
-            return "D"
-
-    # Tier E：H2H（正文中）
-    for kw in keywords["tier_E"]:
-        if kw.lower() in body_l:
-            return "E"
-
-    return None
+    """兼容旧调用：只返回 tier。"""
+    return score_article_for_match(title, content, keywords).get("tier")
 
 
 if __name__ == "__main__":

@@ -331,6 +331,7 @@ def list_match_news(match_id: int, include_content=False):
         SELECT n.id, n.url, n.title, {content_field} n.summary, n.source_name,
                n.language, n.published_at, n.image_url, n.crawled_at,
                nml.tier, nml.confidence,
+               (SELECT COUNT(*) FROM news_match_links x WHERE x.news_id = n.id) AS linked_match_count,
                GROUP_CONCAT(DISTINCT c.name_cn) AS countries,
                GROUP_CONCAT(DISTINCT p.name_cn) AS players
         FROM news_match_links nml
@@ -346,7 +347,7 @@ def list_match_news(match_id: int, include_content=False):
         AND n.title NOT LIKE '%highlight%'
         AND (n.image_url IS NULL OR n.image_url NOT LIKE '%.mp4%')
         GROUP BY n.id
-        ORDER BY {tier_order}, n.published_at DESC
+        ORDER BY {tier_order}, nml.confidence DESC, n.published_at DESC
     """
     with conn_ctx() as conn:
         return [dict(r) for r in conn.execute(sql, (match_id,)).fetchall()]
