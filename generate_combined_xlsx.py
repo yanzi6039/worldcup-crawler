@@ -6,8 +6,11 @@
   python3 generate_combined_xlsx.py
 """
 import os
+import re
 import sys
 from collections import defaultdict
+from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
@@ -17,6 +20,12 @@ from web.timezone_utils import to_beijing, beijing_day
 from match_keywords import generate_match_keywords, score_article_for_match
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
+
+BJ_TZ = timezone(timedelta(hours=8))
+UTC = timezone.utc
+MAX_EXACT_AGE_DAYS = 5
+MAX_BROAD_AGE_DAYS = 3
+BROAD_TIERS = {"C", "D", "E"}
 
 
 def _has_chinese(text: str) -> bool:
@@ -43,6 +52,75 @@ def _adjust_relevance(relevance: dict, linked_count: int) -> dict:
     return out
 
 
+def _parse_crawled_at(raw: str):
+    if not raw:
+        return None
+    try:
+        return datetime.strptime(raw[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC).astimezone(BJ_TZ)
+    except Exception:
+        return None
+
+
+def _parse_article_time(raw: str, crawled_at: str = ""):
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text:
+        return None
+
+    anchor = _parse_crawled_at(crawled_at) or datetime.now(BJ_TZ)
+    m = re.match(r"^(\d+)\s*hours?\s+ago$", text, re.I) or re.match(r"^(\d+)\s*小时前$", text)
+    if m:
+        return anchor - timedelta(hours=int(m.group(1)))
+    m = re.match(r"^(\d+)\s*days?\s+ago$", text, re.I)
+    if m:
+        return anchor - timedelta(days=int(m.group(1)))
+
+    m = re.match(r"^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})(?::\d{2})?", text)
+    if m:
+        try:
+            return datetime.strptime(f"{m.group(1)} {m.group(2)}", "%Y-%m-%d %H:%M").replace(tzinfo=BJ_TZ)
+        except ValueError:
+            return None
+
+    # Some sources store truncated RFC-like strings, e.g. "Tue, 23 Jun 2026 20".
+    m = re.match(r"^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun),\s*(\d{1,2})\s*([A-Za-z]{3})\s*(\d{4})\s*(\d{1,2})", text)
+    if m:
+        months = {
+            "Jan": 1, "Feb": 2, "Mar": 3, "Apr": 4, "May": 5, "Jun": 6,
+            "Jul": 7, "Aug": 8, "Sep": 9, "Oct": 10, "Nov": 11, "Dec": 12,
+        }
+        mon = months.get(m.group(2))
+        if mon:
+            return datetime(int(m.group(3)), mon, int(m.group(1)), int(m.group(4)), tzinfo=UTC).astimezone(BJ_TZ)
+
+    try:
+        dt = parsedate_to_datetime(text)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        return dt.astimezone(BJ_TZ)
+    except Exception:
+        return None
+
+
+def _article_effective_time(article: dict):
+    return _parse_article_time(article.get("published_at"), article.get("crawled_at")) or _parse_crawled_at(article.get("crawled_at"))
+
+
+def _keep_by_freshness(article: dict, tier: str, now_bj: datetime) -> bool:
+    effective = _article_effective_time(article)
+    if effective is None:
+        return True
+    if effective > now_bj:
+        return True
+    if effective.year < now_bj.year:
+        return False
+
+    age = now_bj - effective
+    max_age = MAX_BROAD_AGE_DAYS if (tier or "").upper() in BROAD_TIERS else MAX_EXACT_AGE_DAYS
+    return age <= timedelta(days=max_age)
+
+
 def main():
     ms = store.list_upcoming_matches(days=4, only_scheduled=False, from_tomorrow=True)
     day_matches = defaultdict(list)
@@ -55,6 +133,10 @@ def main():
 
     total_articles = 0
     total_with_content = 0
+    total_seen = 0
+    total_filtered = 0
+    filtered_by_tier = defaultdict(int)
+    now_bj = datetime.now(BJ_TZ)
 
     for day, day_ms in sorted(day_matches.items()):
         if day == '未定':
@@ -98,16 +180,23 @@ def main():
             kws = generate_match_keywords(m)
             articles = store.list_match_news(m['id'], include_content=True)
             for n in articles:
+                total_seen += 1
                 content = n.get('content') or n.get('summary') or ''
-                if content:
-                    total_with_content += 1
-                total_articles += 1
-                pub_at = (n.get('published_at') or '')[:16]  # YYYY-MM-DD HH:MM
                 linked_count = int(n.get('linked_match_count') or 1)
                 relevance = _adjust_relevance(
                     score_article_for_match(n.get('title') or '', content, kws),
                     linked_count,
                 )
+                tier = n.get('tier') or relevance.get('tier') or ''
+                if not _keep_by_freshness(n, tier, now_bj):
+                    total_filtered += 1
+                    filtered_by_tier[tier or ''] += 1
+                    continue
+
+                if content:
+                    total_with_content += 1
+                total_articles += 1
+                pub_at = (n.get('published_at') or '')[:16]  # YYYY-MM-DD HH:MM
                 ws.append([
                     day,
                     bj_time,
@@ -133,6 +222,10 @@ def main():
     print(f"✓ 已生成 {out}")
     print(f"  大小: {size_kb:.1f} KB")
     print(f"  文章: {total_articles} 篇 / 有正文 {total_with_content} 篇 ({pct}%)")
+    print(f"  时效过滤: 扫描 {total_seen} 篇 / 过滤 {total_filtered} 篇")
+    if filtered_by_tier:
+        detail = ", ".join(f"{tier or '无'}={count}" for tier, count in sorted(filtered_by_tier.items()))
+        print(f"  过滤分布: {detail}")
     print(f"  Sheets: {wb.sheetnames}")
 
 
